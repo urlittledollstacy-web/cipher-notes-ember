@@ -141,6 +141,25 @@ fun ChecklistItemRow(
 }
 
 @Composable
+fun SealedTag() {
+    Surface(
+        shape = RoundedCornerShape(6.dp),
+        color = MaterialTheme.colorScheme.secondary.copy(alpha = 0.14f),
+        border = androidx.compose.foundation.BorderStroke(
+            1.dp,
+            MaterialTheme.colorScheme.secondary.copy(alpha = 0.55f)
+        )
+    ) {
+        Text(
+            text = "SEALED",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.secondary,
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+        )
+    }
+}
+
+@Composable
 fun NoteCard(
     note: Note,
     onClick: () -> Unit,
@@ -184,11 +203,13 @@ fun NoteCard(
                             imageVector = Icons.Default.Fingerprint,
                             contentDescription = "Biometric protected",
                             modifier = Modifier.size(16.dp),
-                            tint = MaterialTheme.colorScheme.primary
+                            tint = MaterialTheme.colorScheme.secondary
                         )
+                    } else if (note.encrypted) {
+                        SealedTag()
                     } else {
                         Text(
-                            text = if (note.encrypted) "🔒" else if (note.type == NoteType.TODO) "☑️" else "📝",
+                            text = if (note.type == NoteType.TODO) "☑️" else "📝",
                             fontSize = 12.sp
                         )
                     }

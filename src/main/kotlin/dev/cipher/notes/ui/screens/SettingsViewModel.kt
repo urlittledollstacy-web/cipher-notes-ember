@@ -51,6 +51,7 @@ class SettingsViewModel @Inject constructor(
         private val APP_PIN_KEY = stringPreferencesKey("app_pin")
         private val BIOMETRIC_ENABLED_KEY = booleanPreferencesKey("biometric_enabled")
         private val WIDGET_CONTENT_VISIBLE_KEY = booleanPreferencesKey("widget_content_visible")
+        private val SEAL_NEW_NOTES_KEY = booleanPreferencesKey("seal_new_notes_by_default")
 
         val SELECTED_NOTE_IDS_KEY = stringSetPreferencesKey("selected_note_ids")
 
@@ -121,6 +122,21 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             dataStore.edit { preferences ->
                 preferences[BIOMETRIC_ENABLED_KEY] = enabled
+            }
+        }
+    }
+
+    // Sealing on creation is on by default so a note is never written to the
+    // plaintext database unless the user explicitly declines.
+    val sealNewNotesByDefault: Flow<Boolean> = dataStore.data
+        .map { preferences ->
+            preferences[SEAL_NEW_NOTES_KEY] ?: true
+        }
+
+    fun setSealNewNotesByDefault(enabled: Boolean) {
+        viewModelScope.launch {
+            dataStore.edit { preferences ->
+                preferences[SEAL_NEW_NOTES_KEY] = enabled
             }
         }
     }

@@ -348,13 +348,17 @@ fun EditorScreen(
         }
     }
 
-    if (showEncryptDialog) {
+    if (showEncryptDialog || uiState.promptSeal) {
         EncryptDialog(
             onEncrypt = { pass, enableBiometric ->
                 vm.performEncrypt(password = pass, enableBiometric = enableBiometric)
+                vm.dismissSealPrompt()
                 showEncryptDialog = false
             },
-            onDismiss = { showEncryptDialog = false }
+            onDismiss = {
+                vm.dismissSealPrompt()
+                showEncryptDialog = false
+            }
         )
     }
 

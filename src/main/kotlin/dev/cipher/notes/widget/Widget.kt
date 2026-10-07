@@ -88,7 +88,7 @@ class NotesWidget : GlanceAppWidget() {
             GlanceTheme {
                 WidgetContent(
                     notes = displayedNotes,
-                    isContentVisible = isContentVisible,
+                    isTitleVisible = isContentVisible,
                     clickIntent = mainActivityIntent
                 )
             }
@@ -96,11 +96,11 @@ class NotesWidget : GlanceAppWidget() {
     }
 
     @Composable
-    private fun WidgetContent(notes: List<Note>, isContentVisible: Boolean, clickIntent: Intent) {
+    private fun WidgetContent(notes: List<Note>, isTitleVisible: Boolean, clickIntent: Intent) {
         Column(
             modifier = GlanceModifier
                 .fillMaxSize()
-                .background(ColorProvider(day = Color(0xFF080A0E), night = Color(0xFF080A0E)))
+                .background(ColorProvider(day = Color(0xFF14100D), night = Color(0xFF14100D)))
                 .padding(12.dp)
         ) {
             Row(
@@ -113,7 +113,7 @@ class NotesWidget : GlanceAppWidget() {
                 Text(
                     text = "Pinned Notes",
                     style = TextStyle(
-                        color = ColorProvider(day = Color(0xFF00E5A0), night = Color(0xFF00E5A0)),
+                        color = ColorProvider(day = Color(0xFFD9A441), night = Color(0xFFD9A441)),
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Bold
                     )
@@ -146,7 +146,7 @@ class NotesWidget : GlanceAppWidget() {
                     ) { note ->
                         NoteWidgetItem(
                             note = note,
-                            isContentVisible = isContentVisible,
+                            isTitleVisible = isTitleVisible,
                             clickIntent = clickIntent
                         )
                     }
@@ -156,19 +156,22 @@ class NotesWidget : GlanceAppWidget() {
     }
 
     @Composable
-    private fun NoteWidgetItem(note: Note, isContentVisible: Boolean, clickIntent: Intent) {
+    private fun NoteWidgetItem(note: Note, isTitleVisible: Boolean, clickIntent: Intent) {
         Column(
             modifier = GlanceModifier
                 .fillMaxWidth()
                 .padding(vertical = 4.dp)
-                .background(ColorProvider(day = Color(0xFF121820), night = Color(0xFF121820)))
+                .background(ColorProvider(day = Color(0xFF221C16), night = Color(0xFF221C16)))
                 .padding(8.dp)
                 .clickable(actionStartActivity(clickIntent))
         ) {
+            // The home screen (and lock screen) can be read by anyone holding the
+            // device, so the widget never renders note bodies. Only the title is
+            // ever shown, and only when the user opts in.
             Text(
-                text = note.title.ifEmpty { "Untitled" },
+                text = WidgetText.title(note.title, isTitleVisible),
                 style = TextStyle(
-                    color = ColorProvider(day = Color.White, night = Color.White),
+                    color = ColorProvider(day = Color(0xFFF3EAE0), night = Color(0xFFF3EAE0)),
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Bold
                 ),
@@ -176,19 +179,16 @@ class NotesWidget : GlanceAppWidget() {
             )
             Spacer(modifier = GlanceModifier.height(2.dp))
 
-            val displayText = when {
-                note.encrypted -> "Encrypted note"
-                isContentVisible -> note.content.ifEmpty { "No text content" }
-                else -> "••• Hidden •••"
-            }
-
             Text(
-                text = displayText,
+                text = WidgetText.status(note.encrypted),
                 style = TextStyle(
-                    color = ColorProvider(day = Color(0xFFA0AAB0), night = Color(0xFFA0AAB0)),
+                    color = ColorProvider(
+                        day = if (note.encrypted) Color(0xFFD9A441) else Color(0xFF8A7A6A),
+                        night = if (note.encrypted) Color(0xFFD9A441) else Color(0xFF8A7A6A)
+                    ),
                     fontSize = 11.sp
                 ),
-                maxLines = 5
+                maxLines = 1
             )
         }
     }

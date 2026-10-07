@@ -55,6 +55,7 @@ fun SettingsScreen(
     val isAppLockEnabled by viewModel.isAppLockEnabled.collectAsState(initial = false)
     val isBiometricEnabled by viewModel.isBiometricEnabled.collectAsState(initial = true)
     val isWidgetContentVisible by viewModel.isWidgetContentVisible.collectAsState(initial = false)
+    val sealNewNotesByDefault by viewModel.sealNewNotesByDefault.collectAsState(initial = true)
     val currentPin by viewModel.appPin.collectAsState(initial = null)
 
     val allNotes by viewModel.allNotes.collectAsState(initial = emptyList())
@@ -628,9 +629,9 @@ fun SettingsScreen(
                     )
 
                     ListItem(
-                        headlineContent = { Text(text = "Show Note Content", color = onSurface) },
+                        headlineContent = { Text(text = "Show note titles", color = onSurface) },
                         supportingContent = {
-                            Text(text = "Display unencrypted note previews on home screen widget", color = onSurfaceVariant)
+                            Text(text = "Note bodies are never shown on the widget", color = onSurfaceVariant)
                         },
                         leadingContent = {
                             Icon(imageVector = Icons.Rounded.Widgets, contentDescription = null, tint = primaryColor)
@@ -665,6 +666,31 @@ fun SettingsScreen(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column {
+                    ListItem(
+                        headlineContent = { Text("Seal new notes by default", color = onSurface) },
+                        supportingContent = {
+                            Text("Prompt for a passphrase when a note is created", color = onSurfaceVariant)
+                        },
+                        leadingContent = { Icon(Icons.Rounded.Lock, null, tint = MaterialTheme.colorScheme.secondary) },
+                        trailingContent = {
+                            Switch(
+                                checked = sealNewNotesByDefault,
+                                onCheckedChange = { viewModel.setSealNewNotesByDefault(it) },
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = MaterialTheme.colorScheme.secondary,
+                                    checkedTrackColor = MaterialTheme.colorScheme.secondary.copy(alpha = 0.3f)
+                                )
+                            )
+                        },
+                        colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+                    )
+
+                    HorizontalDivider(
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                        thickness = 0.5.dp,
+                        color = onSurfaceVariant.copy(alpha = 0.1f)
+                    )
+
                     ListItem(
                         headlineContent = { Text("App Lock", color = onSurface) },
                         supportingContent = { Text("Require authentication to open the app", color = onSurfaceVariant) },
@@ -812,18 +838,18 @@ fun SettingsScreen(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
-                    text = "CipherNotes",
+                    text = "Cipher Ember",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     color = onSurface
                 )
                 Text(
-                    text = "Version 2.3.0",
+                    text = "Ember Archive · based on CipherNotes 2.3.0",
                     style = MaterialTheme.typography.bodySmall,
                     color = onSurfaceVariant
                 )
                 Text(
-                    text = "© 2026 CipherApps",
+                    text = "© 2026 CipherApps · MIT",
                     style = MaterialTheme.typography.labelSmall,
                     color = onSurfaceVariant.copy(alpha = 0.5f)
                 )

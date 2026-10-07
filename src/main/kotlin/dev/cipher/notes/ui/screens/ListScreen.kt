@@ -41,18 +41,26 @@ fun ListScreen(
     sharedText: String? = null,
     onNoteClick: (String) -> Unit,
     onSettingsClick: () -> Unit,
-    vm: NoteListViewModel = hiltViewModel()
+    vm: NoteListViewModel = hiltViewModel(),
+    settingsViewModel: SettingsViewModel = hiltViewModel()
 ) {
     val uiState by vm.uiState.collectAsState()
+    val sealByDefault by settingsViewModel.sealNewNotesByDefault.collectAsState(initial = true)
     var showCreateSheet by remember { mutableStateOf(false) }
     var isSharedTextProcessed by rememberSaveable { mutableStateOf(false) }
+
+    fun openCreated(id: String, extraQuery: String? = null): String {
+        val sealQuery = if (sealByDefault) "promptSeal=true" else null
+        val query = listOfNotNull(extraQuery, sealQuery).joinToString("&")
+        return if (query.isEmpty()) id else "$id?$query"
+    }
 
     LaunchedEffect(sharedText) {
         if (sharedText != null && !isSharedTextProcessed) {
             isSharedTextProcessed = true
             vm.createNote(NoteType.TEXT) { noteId ->
                 val encodedText = android.net.Uri.encode(sharedText)
-                onNoteClick("$noteId?sharedText=$encodedText")
+                onNoteClick(openCreated(noteId, "sharedText=$encodedText"))
             }
         }
     }
@@ -65,7 +73,18 @@ fun ListScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Text("CipherNotes", style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.primary)
+                    Column {
+                        Text(
+                            "Cipher",
+                            style = MaterialTheme.typography.headlineMedium,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            "LOCAL VAULT",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.secondary
+                        )
+                    }
                 },
                 actions = {
                     IconButton(onClick = onSettingsClick) {
@@ -93,6 +112,16 @@ fun ListScreen(
                 .padding(paddingValues)
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
+                Text(
+                    text = "◈  No network · by design",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.secondary,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp)
+                        .padding(bottom = 4.dp)
+                )
+
                 TextField(
                     value = uiState.searchQuery,
                     onValueChange = vm::setSearchQuery,
@@ -224,7 +253,7 @@ fun ListScreen(
             onDismiss = { showCreateSheet = false },
             onCreateNote = { type ->
                 showCreateSheet = false
-                vm.createNote(type) { id -> onNoteClick(id) }
+                vm.createNote(type) { id -> onNoteClick(openCreated(id)) }
             }
         )
     }
