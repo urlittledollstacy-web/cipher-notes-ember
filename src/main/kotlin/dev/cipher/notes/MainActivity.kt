@@ -10,7 +10,9 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Fingerprint
 import androidx.compose.material3.*
@@ -19,6 +21,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -28,9 +31,11 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import dagger.hilt.android.AndroidEntryPoint
 import dev.cipher.notes.crypto.BiometricPromptManager
 import dev.cipher.notes.ui.CipherMainApp
+import dev.cipher.notes.ui.LockLayout
 import dev.cipher.notes.ui.screens.SettingsViewModel
 import dev.cipher.notes.ui.theme.CipherTheme
 import dev.cipher.notes.ui.theme.ThemeMode
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @AndroidEntryPoint
@@ -47,18 +52,79 @@ class MainActivity : FragmentActivity() {
 
         setContent {
             val settingsViewModel: SettingsViewModel = hiltViewModel()
-            val useDynamicColors by settingsViewModel.useDynamicColors.collectAsState(initial = true)
-            val themeMode by settingsViewModel.themeMode.collectAsState(initial = ThemeMode.DEFAULT)
-            val isAppLockEnabled by settingsViewModel.isAppLockEnabled.collectAsState(initial = false)
+            val appLockViewModel: AppLockViewModel = hiltViewModel()
+
+            val useDynamicColors by settingsViewModel.useDynamicColors.collectAsState(initial = null)
+            val themeMode by settingsViewModel.themeMode.collectAsState(initial = null)
+            val isAppLockEnabled by settingsViewModel.isAppLockEnabled.collectAsState(initial = null)
             val isBiometricEnabledState by settingsViewModel.isBiometricEnabled.collectAsState(initial = null)
 
-            // Authentication alone is remembered here, so rotation does not re-lock.
-            val appLockViewModel: AppLockViewModel = hiltViewModel()
-            val isAuthenticated = appLockViewModel.isAuthenticated
+            val dynamicColors = useDynamicColors ?: appLockViewModel.dynamicColors
+            val resolvedTheme = themeMode ?: appLockViewModel.themeMode
+            val lockEnabled = isAppLockEnabled ?: appLockViewModel.isAppLockEnabled
+
+            // Give storage a moment to emit. A read normally resolves in
+            // milliseconds; if it cannot, waiting forever would mean a blank
+            // screen the user can never get past, so fall back below.
+            var timedOut by remember { mutableStateOf(false) }
+            LaunchedEffect(dynamicColors, resolvedTheme, lockEnabled) {
+                if (dynamicColors == null || resolvedTheme == null || lockEnabled == null) {
+                    delay(GATE_TIMEOUT_MS)
+                    timedOut = true
+                }
+            }
+
+            // Unknown on a cold start (covered by the splash) or a slow read:
+            // draw only the window background. It must never guess, and never
+            // compose the notes before the lock state is known.
+            if (dynamicColors == null || resolvedTheme == null || lockEnabled == null) {
+                if (!timedOut) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(colorResource(id = R.color.void_bg))
+                    )
+                    return@setContent
+                }
+                // Storage did not answer in time (corrupt or unreadable file).
+                // Do not guess a theme, and do not compose the notes: a wrong
+                // theme is cosmetic, but a missed lock would expose them. So
+                // show the lock and let the user retry.
+                val fallbackTheme = appLockViewModel.themeMode ?: ThemeMode.DEFAULT
+                val fallbackColors = appLockViewModel.dynamicColors ?: false
+                val fallbackLock = appLockViewModel.isAppLockEnabled ?: true
+                CipherTheme(themeMode = fallbackTheme, dynamicColors = fallbackColors) {
+                    ThemedSystemBars()
+                    Surface(
+                        modifier = Modifier.fillMaxSize(),
+                        color = MaterialTheme.colorScheme.background
+                    ) {
+                        if (fallbackLock && !appLockViewModel.isAuthenticated) {
+                            LockScreen(
+                                verifyPin = settingsViewModel::verifyAppPin,
+                                initialLockoutMs = settingsViewModel::activeLockoutMs,
+                                biometricEnabled = false,
+                                onUnlockRequest = {},
+                                onAuthenticated = { appLockViewModel.markAuthenticated() }
+                            )
+                        } else {
+                            StorageUnavailableMessage()
+                        }
+                    }
+                }
+                return@setContent
+            }
+
+            // Remember the resolved values so a recreated activity (rotation)
+            // paints correctly on its first frame instead of guessing.
+            SideEffect {
+                appLockViewModel.cacheTheme(dynamicColors, resolvedTheme)
+                appLockViewModel.cacheLockEnabled(lockEnabled)
+            }
 
             CipherTheme(
-                themeMode = themeMode,
-                dynamicColors = useDynamicColors
+                themeMode = resolvedTheme,
+                dynamicColors = dynamicColors
             ) {
                 ThemedSystemBars()
 
@@ -66,7 +132,7 @@ class MainActivity : FragmentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    if (isAppLockEnabled && !isAuthenticated) {
+                    if (lockEnabled && !appLockViewModel.isAuthenticated) {
                         val biometricEnabled = (isBiometricEnabledState == true) &&
                                 BiometricPromptManager.canAuthenticate(this@MainActivity)
 
@@ -185,116 +251,259 @@ fun LockScreen(
         }
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.SpaceEvenly
-    ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(
-                imageVector = Icons.Rounded.Fingerprint,
-                contentDescription = "Biometric Lock",
-                modifier = Modifier
-                    .size(64.dp)
-                    .clickable(enabled = biometricEnabled) { onUnlockRequest() },
-                tint = if (biometricEnabled) primaryColor else primaryColor.copy(alpha = 0.2f)
-            )
-            Spacer(modifier = Modifier.height(16.dp))
-            Text(
-                text = "CipherNotes Locked",
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold
-            )
+    val rows = listOf(
+        listOf("1", "2", "3"),
+        listOf("4", "5", "6"),
+        listOf("7", "8", "9"),
+        listOf("", "0", "C")
+    )
 
-            Spacer(modifier = Modifier.height(32.dp))
-
-            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                repeat(4) { index ->
-                    val isFilled = index < enteredPin.length
-                    Surface(
-                        modifier = Modifier.size(16.dp),
-                        shape = CircleShape,
-                        color = if (isFilled) primaryColor else primaryColor.copy(alpha = 0.2f),
-                        border = if (!isFilled) BorderStroke(1.dp, primaryColor) else null
-                    ) {}
+    val onDigit: (String) -> Unit = { digit ->
+        if (digit == "C") {
+            if (enteredPin.isNotEmpty()) enteredPin = enteredPin.dropLast(1)
+        } else if (enteredPin.length < 4 && lockedForMs <= 0L && !isVerifying) {
+            enteredPin += digit
+            if (enteredPin.length == 4) {
+                val attempt = enteredPin
+                enteredPin = ""
+                isVerifying = true
+                scope.launch {
+                    when (val result = verifyPin(attempt)) {
+                        is SettingsViewModel.PinResult.Success -> onAuthenticated()
+                        // Use the real remaining time so the countdown reflects
+                        // what is persisted.
+                        is SettingsViewModel.PinResult.Locked ->
+                            lockoutUntil = System.currentTimeMillis() + result.remainingMs
+                        is SettingsViewModel.PinResult.Wrong -> Unit
+                    }
+                    isVerifying = false
                 }
             }
         }
+    }
 
-        Column(
-            modifier = Modifier.width(280.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            if (lockedForMs > 0L) {
-                Text(
-                    text = "Too many attempts. Try again in ${lockedForMs / 1000 + 1}s",
-                    color = MaterialTheme.colorScheme.error,
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.fillMaxWidth(),
-                    textAlign = TextAlign.Center
-                )
-            }
-            val rows = listOf(
-                listOf("1", "2", "3"),
-                listOf("4", "5", "6"),
-                listOf("7", "8", "9"),
-                listOf("", "0", "C")
-            )
-
-            rows.forEach { row ->
+    // The keypad is ~300dp tall, so a landscape phone cannot fit it above the
+    // header. Branch on the available height rather than hard-coding an
+    // orientation the lock screen would then overflow. The inner layout is at
+    // least one viewport tall so it still spreads when it fits, and scrolls
+    // when it does not.
+    BoxWithConstraints(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+    ) {
+        val wide = LockLayout.isWide(maxWidth.value, maxHeight.value)
+        val pad = LOCK_PAD.dp
+        // The keypad is sized from the space it is actually given, so it cannot
+        // overflow on any screen. In the side-by-side layout it shares the width
+        // with the header.
+        val areaWidth = (maxWidth.value - 2 * LOCK_PAD - if (wide) LOCK_COLUMN_GAP else 0f)
+            .let { if (wide) it / 2 else it }
+        val boxHeight = maxHeight
+        val areaHeight = (maxHeight.value - 2 * LOCK_PAD)
+        val keySize = if (wide) {
+            LockLayout.keySizeDp(areaWidth, areaHeight, LockLayout.WIDE_KEY_DP).dp
+        } else {
+            LockLayout.keySizeDp(areaWidth, areaHeight).dp
+        }
+        // In the side-by-side layout the header has the full window height, so
+        // there is no reason to shrink it; only the stacked layout scales it.
+        val headerScale = if (wide) 1f else LockLayout.headerScale(keySize.value)
+        Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+            if (wide) {
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceEvenly
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = boxHeight)
+                        .padding(pad),
+                    horizontalArrangement = Arrangement.spacedBy(LOCK_COLUMN_GAP.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    row.forEach { digit ->
-                        if (digit.isEmpty()) {
-                            Spacer(modifier = Modifier.size(64.dp))
-                        } else {
-                            FilledTonalButton(
-                                onClick = {
-                                    if (digit == "C") {
-                                        if (enteredPin.isNotEmpty()) enteredPin = enteredPin.dropLast(1)
-                                    } else if (enteredPin.length < 4 && lockedForMs <= 0L && !isVerifying) {
-                                        enteredPin += digit
-                                        if (enteredPin.length == 4) {
-                                            val attempt = enteredPin
-                                            enteredPin = ""
-                                            isVerifying = true
-                                            scope.launch {
-                                                when (val result = verifyPin(attempt)) {
-                                                    is SettingsViewModel.PinResult.Success -> onAuthenticated()
-                                                    // Use the real remaining time so the
-                                                    // countdown reflects what is persisted.
-                                                    is SettingsViewModel.PinResult.Locked ->
-                                                        lockoutUntil = System.currentTimeMillis() + result.remainingMs
-                                                    is SettingsViewModel.PinResult.Wrong -> Unit
-                                                }
-                                                isVerifying = false
-                                            }
-                                        }
-                                    }
-                                },
-                                modifier = Modifier.size(64.dp),
-                                shape = CircleShape,
-                                contentPadding = PaddingValues(0.dp)
-                            ) {
-                                Text(digit, style = MaterialTheme.typography.titleLarge)
-                            }
+                    Keypad(
+                        rows = rows,
+                        lockedForMs = lockedForMs,
+                        onDigit = onDigit,
+                        primaryColor = primaryColor,
+                        buttonSize = keySize,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        LockHeader(
+                            enteredPin = enteredPin,
+                            biometricEnabled = biometricEnabled,
+                            primaryColor = primaryColor,
+                            onUnlockRequest = onUnlockRequest,
+                            scale = headerScale
+                        )
+                    }
+                }
+            } else {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = boxHeight)
+                        .padding(pad),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    LockHeader(
+                        enteredPin = enteredPin,
+                        biometricEnabled = biometricEnabled,
+                        primaryColor = primaryColor,
+                        onUnlockRequest = onUnlockRequest,
+                        scale = headerScale
+                    )
+                    Keypad(
+                        rows = rows,
+                        lockedForMs = lockedForMs,
+                        onDigit = onDigit,
+                        primaryColor = primaryColor,
+                        buttonSize = keySize
+                    )
+                    BiometricUnlockButton(
+                        biometricEnabled = biometricEnabled,
+                        onUnlockRequest = onUnlockRequest,
+                        primaryColor = primaryColor
+                    )
+                }
+            }
+        }
+    }
+}
+
+private const val LOCK_PAD = 16f
+private const val LOCK_COLUMN_GAP = 24f
+
+/**
+ * How long to wait for the settings before falling back. Long enough that a
+ * normal read always wins, short enough that a broken one does not look like
+ * a hang.
+ */
+private const val GATE_TIMEOUT_MS = 2000L
+
+/**
+ * Shown when settings could not be read and the lock is configured off, so
+ * there is nothing to unlock. Entering the notes would mean composing them on
+ * an unverified state; this explains the situation instead.
+ */
+@Composable
+private fun StorageUnavailableMessage() {
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Text(
+            text = "Settings could not be loaded.\nRestart the app, or reinstall if this persists.",
+            textAlign = TextAlign.Center,
+            style = MaterialTheme.typography.bodyLarge,
+            modifier = Modifier.padding(32.dp)
+        )
+    }
+}
+
+/** Fingerprint button, title and the four PIN dots. */
+@Composable
+private fun LockHeader(
+    enteredPin: String,
+    biometricEnabled: Boolean,
+    primaryColor: androidx.compose.ui.graphics.Color,
+    onUnlockRequest: () -> Unit,
+    modifier: Modifier = Modifier,
+    scale: Float = 1f
+) {
+    val iconSize = (64 * scale).dp
+    val dotSize = (16 * scale).dp
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Icon(
+            imageVector = Icons.Rounded.Fingerprint,
+            contentDescription = "Biometric Lock",
+            modifier = Modifier
+                .size(iconSize)
+                .clickable(enabled = biometricEnabled) { onUnlockRequest() },
+            tint = if (biometricEnabled) primaryColor else primaryColor.copy(alpha = 0.2f)
+        )
+        Spacer(modifier = Modifier.height((16 * scale).dp))
+        Text(
+            text = "CipherNotes Locked",
+            style = if (scale < 0.8f) MaterialTheme.typography.titleMedium else MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.Bold
+        )
+        Spacer(modifier = Modifier.height((24 * scale).dp))
+        Row(horizontalArrangement = Arrangement.spacedBy((12 * scale).dp)) {
+            repeat(4) { index ->
+                val isFilled = index < enteredPin.length
+                Surface(
+                    modifier = Modifier.size(dotSize),
+                    shape = CircleShape,
+                    color = if (isFilled) primaryColor else primaryColor.copy(alpha = 0.2f),
+                    border = if (!isFilled) BorderStroke(1.dp, primaryColor) else null
+                ) {}
+            }
+        }
+    }
+}
+
+@Composable
+private fun BiometricUnlockButton(
+    biometricEnabled: Boolean,
+    onUnlockRequest: () -> Unit,
+    primaryColor: androidx.compose.ui.graphics.Color
+) {
+    if (biometricEnabled) {
+        TextButton(onClick = onUnlockRequest) {
+            Text("Use Biometrics", color = primaryColor, fontWeight = FontWeight.Medium)
+        }
+    } else {
+        Spacer(modifier = Modifier.height(48.dp))
+    }
+}
+
+/** The 4x3 grid of PIN digits. */
+@Composable
+private fun Keypad(
+    rows: List<List<String>>,
+    lockedForMs: Long,
+    onDigit: (String) -> Unit,
+    primaryColor: androidx.compose.ui.graphics.Color,
+    modifier: Modifier = Modifier,
+    buttonSize: androidx.compose.ui.unit.Dp = 64.dp
+) {
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy((buttonSize.value * 0.25f).dp)
+    ) {
+        if (lockedForMs > 0L) {
+            Text(
+                text = "Too many attempts. Try again in ${lockedForMs / 1000 + 1}s",
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.fillMaxWidth(),
+                textAlign = TextAlign.Center
+            )
+        }
+        rows.forEach { row ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                row.forEach { digit ->
+                    if (digit.isEmpty()) {
+                        Spacer(modifier = Modifier.size(buttonSize))
+                    } else {
+                        FilledTonalButton(
+                            onClick = { onDigit(digit) },
+                            modifier = Modifier.size(buttonSize),
+                            shape = CircleShape,
+                            contentPadding = PaddingValues(0.dp)
+                        ) {
+                            Text(digit, style = MaterialTheme.typography.titleLarge)
                         }
                     }
                 }
             }
-        }
-
-        if (biometricEnabled) {
-            TextButton(onClick = onUnlockRequest) {
-                Text("Use Biometrics", color = primaryColor, fontWeight = FontWeight.Medium)
-            }
-        } else {
-            Spacer(modifier = Modifier.height(48.dp))
         }
     }
 }
