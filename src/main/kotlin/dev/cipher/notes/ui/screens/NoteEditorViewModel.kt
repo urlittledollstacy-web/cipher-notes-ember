@@ -46,7 +46,9 @@ data class EditorUiState(
     val error: String? = null,
     val promptSeal: Boolean = false,
     /** Wall-clock instant the unlock lockout ends, for a live countdown. 0 when not locked out. */
-    val lockoutUntil: Long = 0L
+    val lockoutUntil: Long = 0L,
+    /** True while a password is being checked, so the UI can block further taps. */
+    val isUnlocking: Boolean = false
 )
 
 @HiltViewModel
@@ -334,58 +336,73 @@ class NoteEditorViewModel @Inject constructor(
         }
     }
 
+    private var unlockInFlight = false
+
     fun unlock(password: String) {
+        // Checked synchronously, before any suspension point: taps arrive on the
+        // main thread, so this rejects a burst up front. Without it every tap
+        // started its own guess, the count leapt several rungs at once (straight
+        // to the 320s cap), and a burst got more guesses through than intended.
+        if (unlockInFlight) return
+        unlockInFlight = true
+        _uiState.update { it.copy(isUnlocking = true) }
+
         viewModelScope.launch {
-            val state = _uiState.value
-            val note = state.note ?: return@launch
-            val id = note.id
-
-            // Consulted fresh from storage each time: the wait outlives this
-            // view model, so a lockout set before leaving the note still holds.
-            val remainingMs = lockout.remainingLockoutMs(id, System.currentTimeMillis())
-            if (remainingMs > 0) {
-                _uiState.update {
-                    it.copy(
-                        error = "Too many attempts",
-                        isLocked = true,
-                        lockoutUntil = System.currentTimeMillis() + remainingMs
-                    )
-                }
-                return@launch
-            }
-
             try {
-                val ciphertext = note.ciphertext ?: return@launch
-                val decryptedJson = withContext(Dispatchers.Default) {
-                    crypto.decrypt(ciphertext, password)
+                val state = _uiState.value
+                val note = state.note ?: return@launch
+                val id = note.id
+
+                // Consulted fresh from storage each time: the wait outlives this
+                // view model, so a lockout set before leaving the note still holds.
+                val remainingMs = lockout.remainingLockoutMs(id, System.currentTimeMillis())
+                if (remainingMs > 0) {
+                    _uiState.update {
+                        it.copy(
+                            error = "Too many attempts",
+                            isLocked = true,
+                            lockoutUntil = System.currentTimeMillis() + remainingMs
+                        )
+                    }
+                    return@launch
                 }
 
-                val payload = JSONObject(decryptedJson)
-                currentUserPassword = password
-                lockout.recordSuccess(id)
+                try {
+                    val ciphertext = note.ciphertext ?: return@launch
+                    val decryptedJson = withContext(Dispatchers.Default) {
+                        crypto.decrypt(ciphertext, password)
+                    }
 
-                if (state.hasBiometric || crypto.hasBiometricPassword(id)) {
-                    crypto.savePasswordForBiometric(id, password)
+                    val payload = JSONObject(decryptedJson)
+                    currentUserPassword = password
+                    lockout.recordSuccess(id)
+
+                    if (state.hasBiometric || crypto.hasBiometricPassword(id)) {
+                        crypto.savePasswordForBiometric(id, password)
+                    }
+
+                    _uiState.update { it.copy(
+                        isLocked = false,
+                        title = payload.optString("title", note.title),
+                        content = TextFieldValue(text = payload.optString("content", "")),
+                        items = if (note.type == NoteType.TODO) {
+                            JsonUtils.jsonToTodoItems(payload.optString("items", "[]"))
+                        } else emptyList(),
+                        hasBiometric = crypto.hasBiometricPassword(id),
+                        error = null,
+                        lockoutUntil = 0L
+                    ) }
+                } catch (e: Exception) {
+                    val backoff = lockout.recordFailure(id, System.currentTimeMillis())
+                    _uiState.update { it.copy(
+                        error = "Wrong password",
+                        isLocked = true,
+                        lockoutUntil = if (backoff > 0L) System.currentTimeMillis() + backoff else 0L
+                    ) }
                 }
-
-                _uiState.update { it.copy(
-                    isLocked = false,
-                    title = payload.optString("title", note.title),
-                    content = TextFieldValue(text = payload.optString("content", "")),
-                    items = if (note.type == NoteType.TODO) {
-                        JsonUtils.jsonToTodoItems(payload.optString("items", "[]"))
-                    } else emptyList(),
-                    hasBiometric = crypto.hasBiometricPassword(id),
-                    error = null,
-                    lockoutUntil = 0L
-                ) }
-            } catch (e: Exception) {
-                val backoff = lockout.recordFailure(id, System.currentTimeMillis())
-                _uiState.update { it.copy(
-                    error = "Wrong password",
-                    isLocked = true,
-                    lockoutUntil = if (backoff > 0L) System.currentTimeMillis() + backoff else 0L
-                ) }
+            } finally {
+                unlockInFlight = false
+                _uiState.update { it.copy(isUnlocking = false) }
             }
         }
     }

@@ -13,16 +13,11 @@ import androidx.compose.ui.text.font.FontWeight
 import kotlinx.coroutines.delay
 
 /**
- * Live "try again in Ns" line for the note-unlock lockout.
- *
- * The wait is carried as a deadline rather than a pre-formatted string so the
- * number ticks down on its own. A frozen string forced the user to retry just
- * to see how long was left.
+ * Remaining wait in milliseconds, recomputed every second while a lockout runs
+ * so callers can react to it reaching zero.
  */
 @Composable
-fun UnlockCountdown(lockoutUntil: Long, modifier: Modifier = Modifier) {
-    if (lockoutUntil <= 0L) return
-
+fun rememberLockoutRemainingMs(lockoutUntil: Long): Long {
     var now by remember(lockoutUntil) { mutableStateOf(System.currentTimeMillis()) }
     LaunchedEffect(lockoutUntil) {
         while (System.currentTimeMillis() < lockoutUntil) {
@@ -31,8 +26,20 @@ fun UnlockCountdown(lockoutUntil: Long, modifier: Modifier = Modifier) {
         }
         now = System.currentTimeMillis()
     }
+    return (lockoutUntil - now).coerceAtLeast(0L)
+}
 
-    val secondsLeft = ((lockoutUntil - now).coerceAtLeast(0L) + 999L) / 1000L
+/**
+ * Live "try again in Ns" line for the note-unlock lockout.
+ *
+ * The wait is carried as a deadline rather than a pre-formatted string so the
+ * number ticks down on its own. A frozen string forced the user to retry just
+ * to see how long was left.
+ */
+@Composable
+fun UnlockCountdown(lockoutUntil: Long, modifier: Modifier = Modifier) {
+    val remainingMs = rememberLockoutRemainingMs(lockoutUntil)
+    val secondsLeft = (remainingMs + 999L) / 1000L
     if (secondsLeft > 0L) {
         Text(
             text = "Try again in ${secondsLeft}s",
@@ -43,3 +50,4 @@ fun UnlockCountdown(lockoutUntil: Long, modifier: Modifier = Modifier) {
         )
     }
 }
+

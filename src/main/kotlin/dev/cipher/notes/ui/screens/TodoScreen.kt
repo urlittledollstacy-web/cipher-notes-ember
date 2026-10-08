@@ -40,6 +40,7 @@ import dev.cipher.notes.crypto.BiometricPromptManager
 import dev.cipher.notes.data.TodoItem
 import dev.cipher.notes.ui.components.EncryptDialog
 import dev.cipher.notes.ui.components.UnlockCountdown
+import dev.cipher.notes.ui.components.rememberLockoutRemainingMs
 import dev.cipher.notes.utils.DateUtils
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -162,6 +163,7 @@ fun TodoScreen(
                     Text(uiState.error!!, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 8.dp))
                 }
                 UnlockCountdown(uiState.lockoutUntil, modifier = Modifier.padding(top = 4.dp))
+                val lockoutRemainingMs = rememberLockoutRemainingMs(uiState.lockoutUntil)
                 Button(
                     onClick = { vm.unlock(passwordInput) },
                     modifier = Modifier
@@ -169,7 +171,7 @@ fun TodoScreen(
                         .padding(top = 24.dp)
                         .height(56.dp),
                     shape = RoundedCornerShape(16.dp),
-                    enabled = passwordInput.isNotEmpty()
+                    enabled = passwordInput.isNotEmpty() && !uiState.isUnlocking && lockoutRemainingMs <= 0L
                 ) {
                     Icon(Icons.Rounded.LockOpen, null)
                     Spacer(Modifier.width(8.dp))
