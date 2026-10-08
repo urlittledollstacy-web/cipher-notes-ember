@@ -46,7 +46,7 @@ fun ListScreen(
     settingsViewModel: SettingsViewModel = hiltViewModel()
 ) {
     val uiState by vm.uiState.collectAsState()
-    val sealByDefault by settingsViewModel.sealNewNotesByDefault.collectAsState(initial = true)
+    val sealByDefault by settingsViewModel.sealNewNotesByDefault.collectAsState(initial = null)
     var showCreateSheet by remember { mutableStateOf(false) }
     var isSharedTextProcessed by rememberSaveable { mutableStateOf(false) }
 
@@ -62,18 +62,23 @@ fun ListScreen(
         if (result == SnackbarResult.ActionPerformed) vm.undoDelete()
     }
 
-    fun openCreated(id: String, extraQuery: String? = null): String {
-        val sealQuery = if (sealByDefault) "promptSeal=true" else null
+    fun openCreated(id: String, extraQuery: String? = null, seal: Boolean = true): String {
+        val sealQuery = if (seal) "promptSeal=true" else null
         val query = listOfNotNull(extraQuery, sealQuery).joinToString("&")
         return if (query.isEmpty()) id else "$id?$query"
     }
 
-    LaunchedEffect(sharedText) {
-        if (sharedText != null && !isSharedTextProcessed) {
+    LaunchedEffect(sharedText, sealByDefault) {
+        // Creating a note from shared text navigates immediately, so it can
+        // outrun the settings read and open the editor before the seal
+        // preference is known. Wait for it rather than run on a guess: a guess
+        // would prompt to seal a note the user asked to stay open. The other
+        // creation paths are user-paced and cannot hit this.
+        if (sharedText != null && !isSharedTextProcessed && sealByDefault != null) {
             isSharedTextProcessed = true
             vm.createNote(NoteType.TEXT) { noteId ->
                 val encodedText = android.net.Uri.encode(sharedText)
-                onNoteClick(openCreated(noteId, "sharedText=$encodedText"))
+                onNoteClick(openCreated(noteId, "sharedText=$encodedText", seal = sealByDefault == true))
             }
         }
     }
@@ -270,7 +275,12 @@ fun ListScreen(
             onDismiss = { showCreateSheet = false },
             onCreateNote = { type ->
                 showCreateSheet = false
-                vm.createNote(type) { id -> onNoteClick(openCreated(id)) }
+                vm.createNote(type) { id ->
+                    // Respect seal-by-default here too; the previous default of
+                    // "seal = true" ignored the setting entirely. If it has not
+                    // loaded yet, prompt rather than write an unsealed note.
+                    onNoteClick(openCreated(id, seal = sealByDefault != false))
+                }
             }
         )
     }
