@@ -36,7 +36,8 @@ data class EditorUiState(
     val isLocked: Boolean = false,
     val hasBiometric: Boolean = false,
     val isLoading: Boolean = false,
-    val error: String? = null
+    val error: String? = null,
+    val promptSeal: Boolean = false
 )
 
 @HiltViewModel
@@ -47,8 +48,17 @@ class NoteEditorViewModel @Inject constructor(
     private val savedStateHandle: SavedStateHandle
 ) : ViewModel() {
 
+    private companion object {
+        const val MAX_UNLOCK_ATTEMPTS = 5
+        const val BASE_LOCKOUT_MS = 2_000L
+    }
+
     private val noteId: String? = savedStateHandle["noteId"]
+    private val promptSealOnOpen: Boolean =
+        savedStateHandle.get<String>("promptSeal")?.toBoolean() ?: false
     private var currentUserPassword: String? = null
+    private var failedAttempts = 0
+    private var lockoutUntil = 0L
     private val _uiState = MutableStateFlow(EditorUiState())
     val uiState: StateFlow<EditorUiState> = _uiState.asStateFlow()
 
@@ -77,7 +87,8 @@ class NoteEditorViewModel @Inject constructor(
                     items = if (note.type == NoteType.TODO) JsonUtils.jsonToTodoItems(note.itemsJson) else emptyList(),
                     encrypted = note.encrypted,
                     isLocked = note.encrypted,
-                    hasBiometric = crypto.hasBiometricPassword(note.id)
+                    hasBiometric = crypto.hasBiometricPassword(note.id),
+                    promptSeal = promptSealOnOpen && !note.encrypted
                 )
 
                 if (incomingSharedText != null) {
@@ -244,6 +255,14 @@ class NoteEditorViewModel @Inject constructor(
             val state = _uiState.value
             val note = state.note ?: return@launch
 
+            val remainingMs = lockoutUntil - System.currentTimeMillis()
+            if (remainingMs > 0) {
+                _uiState.update {
+                    it.copy(error = "Too many attempts. Try again in ${(remainingMs / 1000) + 1}s", isLocked = true)
+                }
+                return@launch
+            }
+
             try {
                 val ciphertext = note.ciphertext ?: return@launch
                 val decryptedJson = withContext(Dispatchers.Default) {
@@ -252,6 +271,8 @@ class NoteEditorViewModel @Inject constructor(
 
                 val payload = JSONObject(decryptedJson)
                 currentUserPassword = password
+                failedAttempts = 0
+                lockoutUntil = 0L
 
 
                 if (state.hasBiometric || crypto.hasBiometricPassword(note.id)) {
@@ -269,10 +290,64 @@ class NoteEditorViewModel @Inject constructor(
                     error = null
                 ) }
             } catch (e: Exception) {
+                failedAttempts++
+                if (failedAttempts >= MAX_UNLOCK_ATTEMPTS) {
+                    // Exponential backoff caps how fast a short PIN can be guessed.
+                    lockoutUntil = System.currentTimeMillis() +
+                        BASE_LOCKOUT_MS * (1L shl (failedAttempts - MAX_UNLOCK_ATTEMPTS).coerceAtMost(6))
+                }
+                val lockMessage = if (lockoutUntil > System.currentTimeMillis()) {
+                    "Wrong password. Locked for ${(lockoutUntil - System.currentTimeMillis()) / 1000 + 1}s"
+                } else {
+                    "Wrong password"
+                }
                 _uiState.update { it.copy(
-                    error = "Wrong password",
+                    error = lockMessage,
                     isLocked = true
                 ) }
+            }
+        }
+    }
+
+    fun dismissSealPrompt() {
+        _uiState.update { it.copy(promptSeal = false) }
+    }
+
+    /**
+     * Removes a note's seal, storing its contents in the clear.
+     *
+     * Only reachable once the note is unlocked, so the plaintext is already in
+     * state and this is a save with the seal dropped rather than a decrypt.
+     */
+    fun unseal() {
+        viewModelScope.launch {
+            val state = _uiState.value
+            val note = state.note ?: return@launch
+            if (state.isLocked) return@launch
+            try {
+                val unsealed = note.copy(
+                    title = state.title.trim(),
+                    encrypted = false,
+                    ciphertext = null,
+                    content = if (note.type == NoteType.TEXT) state.content.text else "",
+                    itemsJson = if (note.type == NoteType.TODO) JsonUtils.todoItemsToJson(state.items) else "[]",
+                    modifiedAt = System.currentTimeMillis()
+                )
+                repo.saveNote(unsealed)
+                // Nothing should keep a biometric unlock pointing at a note
+                // that is now plaintext.
+                crypto.removeBiometricPassword(note.id)
+                // Drop the cached password so the next save cannot re-seal.
+                currentUserPassword = null
+                _uiState.update { it.copy(
+                    note = unsealed,
+                    encrypted = false,
+                    isLocked = false,
+                    hasBiometric = false,
+                    error = null
+                ) }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(error = "Unseal failed") }
             }
         }
     }

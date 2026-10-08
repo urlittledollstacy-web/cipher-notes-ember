@@ -88,9 +88,10 @@ dependencies {
 
     add("debugImplementation", "androidx.compose.ui:ui-tooling")
     add("implementation", "androidx.biometric:biometric-ktx:1.2.0-alpha05")
-    add("implementation", ("androidx.security:security-crypto:1.1.0-alpha06"))
 
     add("implementation", "androidx.glance:glance-appwidget:1.1.1")
     add("implementation", "androidx.glance:glance-material3:1.1.1")
+
+    add("testImplementation", "junit:junit:4.13.2")
 
 }

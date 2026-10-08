@@ -3,6 +3,7 @@ package dev.cipher.notes.ui.screens
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -27,6 +28,8 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import dev.cipher.notes.crypto.BiometricPromptManager
+import dev.cipher.notes.ui.theme.ThemeMode
+import dev.cipher.notes.ui.theme.themeSwatches
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -50,12 +53,24 @@ fun SettingsScreen(
     var pendingImportUri by remember { mutableStateOf<Uri?>(null) }
     var showImportPasswordDialog by remember { mutableStateOf(false) }
     var importPassword by remember { mutableStateOf("") }
+    var showThemeDialog by remember { mutableStateOf(false) }
 
-    val useDynamicColors by viewModel.useDynamicColors.collectAsState(initial = true)
-    val isAppLockEnabled by viewModel.isAppLockEnabled.collectAsState(initial = false)
-    val isBiometricEnabled by viewModel.isBiometricEnabled.collectAsState(initial = true)
-    val isWidgetContentVisible by viewModel.isWidgetContentVisible.collectAsState(initial = false)
-    val currentPin by viewModel.appPin.collectAsState(initial = null)
+    // Unknown until storage emits. Painted as a blank background rather than
+    // guessed, so a rotated screen never shows the wrong theme or toggles.
+    val settings by viewModel.uiState.collectAsState(initial = null)
+
+    val loaded = settings
+    if (loaded == null) {
+        // Storage has not emitted yet. Draw the window background and nothing
+        // else, so a rotated screen never flashes a guessed theme or toggle.
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background)
+        )
+        return
+    }
+
 
     val allNotes by viewModel.allNotes.collectAsState(initial = emptyList())
     val pinnedNoteIds by viewModel.pinnedNoteIds.collectAsState(initial = emptySet())
@@ -234,6 +249,43 @@ fun SettingsScreen(
                     importPassword = ""
                 }) {
                     Text("Cancel")
+                }
+            }
+        )
+    }
+
+    if (showThemeDialog) {
+        AlertDialog(
+            onDismissRequest = { showThemeDialog = false },
+            title = { Text("Theme", style = MaterialTheme.typography.titleLarge) },
+            text = {
+                Column {
+                    ThemeMode.entries.forEach { mode ->
+                        ListItem(
+                            modifier = Modifier.clickable {
+                                viewModel.setThemeMode(mode)
+                                showThemeDialog = false
+                            },
+                            headlineContent = { Text(mode.label, color = onSurface) },
+                            supportingContent = { Text(mode.summary, color = onSurfaceVariant) },
+                            leadingContent = { ThemeSwatch(mode, tint = primaryColor) },
+                            trailingContent = {
+                                RadioButton(selected = mode == loaded.themeMode, onClick = null)
+                            },
+                            colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+                        )
+                    }
+                    Text(
+                        text = "Dynamic Colors overrides the theme above when available.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = onSurfaceVariant,
+                        modifier = Modifier.padding(top = 8.dp)
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showThemeDialog = false }) {
+                    Text("Close", color = primaryColor)
                 }
             }
         )
@@ -539,13 +591,34 @@ fun SettingsScreen(
                     leadingContent = { Icon(Icons.Rounded.Palette, null, tint = primaryColor) },
                     trailingContent = {
                         Switch(
-                            checked = useDynamicColors,
+                            checked = loaded.dynamicColors,
                             onCheckedChange = { viewModel.setDynamicColors(it) },
                             colors = SwitchDefaults.colors(
                                 checkedThumbColor = primaryColor,
                                 checkedTrackColor = primaryColor.copy(alpha = 0.3f)
                             )
                         )
+                    },
+                    colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = surfaceContainer,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                ListItem(
+                    modifier = Modifier.clickable { showThemeDialog = true },
+                    headlineContent = { Text("Theme", color = onSurface) },
+                    supportingContent = { Text(loaded.themeMode.summary, color = onSurfaceVariant) },
+                    leadingContent = {
+                        ThemeSwatch(loaded.themeMode, tint = primaryColor)
+                    },
+                    trailingContent = {
+                        Text(loaded.themeMode.label, color = primaryColor, style = MaterialTheme.typography.labelLarge)
                     },
                     colors = ListItemDefaults.colors(containerColor = Color.Transparent)
                 )
@@ -628,16 +701,16 @@ fun SettingsScreen(
                     )
 
                     ListItem(
-                        headlineContent = { Text(text = "Show Note Content", color = onSurface) },
+                        headlineContent = { Text(text = "Show note titles", color = onSurface) },
                         supportingContent = {
-                            Text(text = "Display unencrypted note previews on home screen widget", color = onSurfaceVariant)
+                            Text(text = "Note bodies are never shown on the widget", color = onSurfaceVariant)
                         },
                         leadingContent = {
                             Icon(imageVector = Icons.Rounded.Widgets, contentDescription = null, tint = primaryColor)
                         },
                         trailingContent = {
                             Switch(
-                                checked = isWidgetContentVisible,
+                                checked = loaded.widgetContentVisible,
                                 onCheckedChange = { viewModel.setWidgetContentVisible(it) },
                                 colors = SwitchDefaults.colors(
                                     checkedThumbColor = primaryColor,
@@ -666,14 +739,39 @@ fun SettingsScreen(
             ) {
                 Column {
                     ListItem(
+                        headlineContent = { Text("Seal new notes by default", color = onSurface) },
+                        supportingContent = {
+                            Text("Prompt for a passphrase when a note is created", color = onSurfaceVariant)
+                        },
+                        leadingContent = { Icon(Icons.Rounded.Lock, null, tint = MaterialTheme.colorScheme.secondary) },
+                        trailingContent = {
+                            Switch(
+                                checked = loaded.sealNewNotesByDefault,
+                                onCheckedChange = { viewModel.setSealNewNotesByDefault(it) },
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = MaterialTheme.colorScheme.secondary,
+                                    checkedTrackColor = MaterialTheme.colorScheme.secondary.copy(alpha = 0.3f)
+                                )
+                            )
+                        },
+                        colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+                    )
+
+                    HorizontalDivider(
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                        thickness = 0.5.dp,
+                        color = onSurfaceVariant.copy(alpha = 0.1f)
+                    )
+
+                    ListItem(
                         headlineContent = { Text("App Lock", color = onSurface) },
                         supportingContent = { Text("Require authentication to open the app", color = onSurfaceVariant) },
                         leadingContent = { Icon(Icons.Rounded.Lock, null, tint = primaryColor) },
                         trailingContent = {
                             Switch(
-                                checked = isAppLockEnabled,
+                                checked = loaded.appLockEnabled,
                                 onCheckedChange = { enabled ->
-                                    if (enabled && currentPin == null) {
+                                    if (enabled && !loaded.appPinSet) {
                                         showPinDialog = true
                                     } else {
                                         viewModel.setAppLock(enabled)
@@ -688,7 +786,7 @@ fun SettingsScreen(
                         colors = ListItemDefaults.colors(containerColor = Color.Transparent)
                     )
 
-                    if (isAppLockEnabled) {
+                    if (loaded.appLockEnabled) {
                         ListItem(
                             headlineContent = { Text("Biometric Unlock", color = onSurface) },
                             supportingContent = {
@@ -701,7 +799,7 @@ fun SettingsScreen(
                             leadingContent = { Icon(Icons.Rounded.Fingerprint, null, tint = primaryColor) },
                             trailingContent = {
                                 Switch(
-                                    checked = isBiometricEnabled && isHardwareBiometricAvailable,
+                                    checked = loaded.biometricEnabled && isHardwareBiometricAvailable,
                                     enabled = isHardwareBiometricAvailable,
                                     onCheckedChange = { viewModel.setBiometric(it) },
                                     colors = SwitchDefaults.colors(
@@ -718,7 +816,7 @@ fun SettingsScreen(
                             headlineContent = { Text("Change App PIN", color = onSurface) },
                             supportingContent = {
                                 Text(
-                                    if (currentPin == null) "PIN not set" else "Update your 4-digit security code",
+                                    if (loaded.appPinSet) "Update your 4-digit security code" else "PIN not set",
                                     color = onSurfaceVariant
                                 )
                             },
@@ -726,7 +824,7 @@ fun SettingsScreen(
                             colors = ListItemDefaults.colors(containerColor = Color.Transparent)
                         )
 
-                        if (currentPin != null) {
+                        if (loaded.appPinSet) {
                             ListItem(
                                 modifier = Modifier.clickable { showRemovePinConfirm = true },
                                 headlineContent = { Text("Remove App PIN", color = onSurface) },
@@ -812,22 +910,37 @@ fun SettingsScreen(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
-                    text = "CipherNotes",
+                    text = "Cipher Ember",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     color = onSurface
                 )
                 Text(
-                    text = "Version 2.3.0",
+                    text = "Ember Archive · based on CipherNotes 2.3.0",
                     style = MaterialTheme.typography.bodySmall,
                     color = onSurfaceVariant
                 )
                 Text(
-                    text = "© 2026 CipherApps",
+                    text = "© 2026 CipherApps · MIT",
                     style = MaterialTheme.typography.labelSmall,
                     color = onSurfaceVariant.copy(alpha = 0.5f)
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun ThemeSwatch(mode: ThemeMode, tint: Color) {
+    val swatches = themeSwatches(mode)
+    Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+        swatches.forEach { color ->
+            Surface(
+                modifier = Modifier.size(20.dp),
+                shape = RoundedCornerShape(6.dp),
+                color = color,
+                border = androidx.compose.foundation.BorderStroke(1.dp, tint.copy(alpha = 0.35f))
+            ) {}
         }
     }
 }

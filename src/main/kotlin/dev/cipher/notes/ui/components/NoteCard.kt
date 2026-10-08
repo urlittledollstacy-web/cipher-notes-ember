@@ -1,5 +1,6 @@
 package dev.cipher.notes.ui.components
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -15,7 +16,9 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
@@ -31,6 +34,85 @@ import dev.cipher.notes.data.NoteType
 import dev.cipher.notes.data.TodoItem
 import dev.cipher.notes.utils.DateUtils
 import dev.cipher.notes.utils.JsonUtils
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+
+/**
+ * Swipe an existing card toward the start edge to delete it.
+ *
+ * Commit happens on gesture completion (the box settles past the threshold),
+ * not on touch, so a fumbled or partial swipe springs back without deleting.
+ * Encrypted notes never dismiss here: the caller vetoes them, the card snaps
+ * back, and a confirmation dialog is shown instead. The haptic fires only once
+ * the threshold has actually been crossed.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SwipeToDeleteNoteCard(
+    note: Note,
+    canSwipe: Boolean,
+    onClick: () -> Unit,
+    onSwipeDelete: () -> Unit,
+    modifier: Modifier = Modifier,
+    isPinned: Boolean = false,
+    hasBiometric: Boolean = false,
+    onPinClick: (() -> Unit)? = null
+) {
+    val haptics = LocalHapticFeedback.current
+    val state = rememberSwipeToDismissBoxState(
+        confirmValueChange = { value ->
+            if (value == SwipeToDismissBoxValue.EndToStart && canSwipe) {
+                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                onSwipeDelete()
+                true
+            } else {
+                false
+            }
+        },
+        positionalThreshold = { distance -> distance * 0.35f }
+    )
+
+    SwipeToDismissBox(
+        state = state,
+        modifier = modifier,
+        enableDismissFromStartToEnd = false,
+        enableDismissFromEndToStart = true,
+        backgroundContent = {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(MaterialTheme.colorScheme.errorContainer)
+                    .padding(horizontal = 20.dp),
+                contentAlignment = Alignment.CenterEnd
+            ) {
+                if (canSwipe) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.Delete,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            "Delete",
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+            }
+        }
+    ) {
+        NoteCard(
+            note = note,
+            onClick = onClick,
+            isPinned = isPinned,
+            hasBiometric = hasBiometric,
+            onPinClick = onPinClick
+        )
+    }
+}
 
 @Composable
 fun buildLinkifiedString(text: String): AnnotatedString {
@@ -141,6 +223,38 @@ fun ChecklistItemRow(
 }
 
 @Composable
+fun SealedTag(hasBiometric: Boolean = false) {
+    Surface(
+        shape = RoundedCornerShape(6.dp),
+        color = MaterialTheme.colorScheme.secondary.copy(alpha = 0.14f),
+        border = androidx.compose.foundation.BorderStroke(
+            1.dp,
+            MaterialTheme.colorScheme.secondary.copy(alpha = 0.55f)
+        )
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(3.dp)
+        ) {
+            if (hasBiometric) {
+                Icon(
+                    imageVector = Icons.Default.Fingerprint,
+                    contentDescription = null,
+                    modifier = Modifier.size(12.dp),
+                    tint = MaterialTheme.colorScheme.secondary
+                )
+            }
+            Text(
+                text = "SEALED",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.secondary
+            )
+        }
+    }
+}
+
+@Composable
 fun NoteCard(
     note: Note,
     onClick: () -> Unit,
@@ -179,16 +293,11 @@ fun NoteCard(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    if (note.encrypted && hasBiometric) {
-                        Icon(
-                            imageVector = Icons.Default.Fingerprint,
-                            contentDescription = "Biometric protected",
-                            modifier = Modifier.size(16.dp),
-                            tint = MaterialTheme.colorScheme.primary
-                        )
+                    if (note.encrypted) {
+                        SealedTag(hasBiometric = hasBiometric)
                     } else {
                         Text(
-                            text = if (note.encrypted) "🔒" else if (note.type == NoteType.TODO) "☑️" else "📝",
+                            text = if (note.type == NoteType.TODO) "☑️" else "📝",
                             fontSize = 12.sp
                         )
                     }

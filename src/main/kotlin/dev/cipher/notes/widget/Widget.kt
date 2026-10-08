@@ -6,8 +6,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
+import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.glance.GlanceId
 import androidx.glance.GlanceModifier
@@ -42,12 +44,14 @@ import dagger.hilt.components.SingletonComponent
 import dev.cipher.notes.MainActivity
 import dev.cipher.notes.data.Note
 import dev.cipher.notes.data.NoteRepository
+import dev.cipher.notes.ui.theme.ThemeMode
 import kotlinx.coroutines.flow.firstOrNull
 
 @EntryPoint
 @InstallIn(SingletonComponent::class)
 interface NotesWidgetEntryPoint {
     fun noteRepository(): NoteRepository
+    fun dataStore(): DataStore<Preferences>
 }
 
 class NotesWidget : GlanceAppWidget() {
@@ -56,6 +60,7 @@ class NotesWidget : GlanceAppWidget() {
     companion object {
         val WIDGET_CONTENT_VISIBLE_KEY = booleanPreferencesKey("widget_content_visible")
         val SELECTED_NOTE_IDS_KEY = stringSetPreferencesKey("selected_note_ids")
+        val THEME_MODE_KEY = stringPreferencesKey("theme_mode")
     }
 
     override suspend fun provideGlance(context: Context, id: GlanceId) {
@@ -71,6 +76,13 @@ class NotesWidget : GlanceAppWidget() {
             repository.getAllNotes().firstOrNull() ?: emptyList()
         }.getOrDefault(emptyList())
 
+        // Read straight from DataStore rather than relying only on the mirrored
+        // Glance state: a widget added before any theme change has nothing
+        // mirrored yet, but DataStore always holds the truth.
+        val storedThemeKey = runCatching {
+            entryPoint.dataStore().data.firstOrNull()?.get(THEME_MODE_KEY)
+        }.getOrNull()
+
 
         val mainActivityIntent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
@@ -80,6 +92,9 @@ class NotesWidget : GlanceAppWidget() {
             val state = currentState<Preferences>()
             val selectedNoteIds = state[SELECTED_NOTE_IDS_KEY] ?: emptySet()
             val isContentVisible = state[WIDGET_CONTENT_VISIBLE_KEY] ?: false
+            val widgetTheme = WidgetTheme.of(
+                ThemeMode.fromKey(state[THEME_MODE_KEY] ?: storedThemeKey)
+            )
 
             val displayedNotes = allNotes
                 .filter { note -> selectedNoteIds.contains(note.id) }
@@ -88,7 +103,8 @@ class NotesWidget : GlanceAppWidget() {
             GlanceTheme {
                 WidgetContent(
                     notes = displayedNotes,
-                    isContentVisible = isContentVisible,
+                    isTitleVisible = isContentVisible,
+                    widgetTheme = widgetTheme,
                     clickIntent = mainActivityIntent
                 )
             }
@@ -96,11 +112,16 @@ class NotesWidget : GlanceAppWidget() {
     }
 
     @Composable
-    private fun WidgetContent(notes: List<Note>, isContentVisible: Boolean, clickIntent: Intent) {
+    private fun WidgetContent(
+        notes: List<Note>,
+        isTitleVisible: Boolean,
+        widgetTheme: WidgetTheme,
+        clickIntent: Intent
+    ) {
         Column(
             modifier = GlanceModifier
                 .fillMaxSize()
-                .background(ColorProvider(day = Color(0xFF080A0E), night = Color(0xFF080A0E)))
+                .background(ColorProvider(day = widgetTheme.backgroundDay, night = widgetTheme.backgroundNight))
                 .padding(12.dp)
         ) {
             Row(
@@ -113,7 +134,7 @@ class NotesWidget : GlanceAppWidget() {
                 Text(
                     text = "Pinned Notes",
                     style = TextStyle(
-                        color = ColorProvider(day = Color(0xFF00E5A0), night = Color(0xFF00E5A0)),
+                        color = ColorProvider(day = widgetTheme.accentDay, night = widgetTheme.accentNight),
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Bold
                     )
@@ -146,7 +167,8 @@ class NotesWidget : GlanceAppWidget() {
                     ) { note ->
                         NoteWidgetItem(
                             note = note,
-                            isContentVisible = isContentVisible,
+                            isTitleVisible = isTitleVisible,
+                            widgetTheme = widgetTheme,
                             clickIntent = clickIntent
                         )
                     }
@@ -156,19 +178,27 @@ class NotesWidget : GlanceAppWidget() {
     }
 
     @Composable
-    private fun NoteWidgetItem(note: Note, isContentVisible: Boolean, clickIntent: Intent) {
+    private fun NoteWidgetItem(
+        note: Note,
+        isTitleVisible: Boolean,
+        widgetTheme: WidgetTheme,
+        clickIntent: Intent
+    ) {
         Column(
             modifier = GlanceModifier
                 .fillMaxWidth()
                 .padding(vertical = 4.dp)
-                .background(ColorProvider(day = Color(0xFF121820), night = Color(0xFF121820)))
+                .background(ColorProvider(day = widgetTheme.surfaceDay, night = widgetTheme.surfaceNight))
                 .padding(8.dp)
                 .clickable(actionStartActivity(clickIntent))
         ) {
+            // The home screen (and lock screen) can be read by anyone holding the
+            // device, so the widget never renders note bodies. Only the title is
+            // ever shown, and only when the user opts in.
             Text(
-                text = note.title.ifEmpty { "Untitled" },
+                text = WidgetText.title(note.title, isTitleVisible),
                 style = TextStyle(
-                    color = ColorProvider(day = Color.White, night = Color.White),
+                    color = ColorProvider(day = widgetTheme.titleDay, night = widgetTheme.titleNight),
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Bold
                 ),
@@ -176,19 +206,16 @@ class NotesWidget : GlanceAppWidget() {
             )
             Spacer(modifier = GlanceModifier.height(2.dp))
 
-            val displayText = when {
-                note.encrypted -> "Encrypted note"
-                isContentVisible -> note.content.ifEmpty { "No text content" }
-                else -> "••• Hidden •••"
-            }
-
             Text(
-                text = displayText,
+                text = WidgetText.status(note.encrypted),
                 style = TextStyle(
-                    color = ColorProvider(day = Color(0xFFA0AAB0), night = Color(0xFFA0AAB0)),
+                    color = ColorProvider(
+                        day = if (note.encrypted) widgetTheme.accentDay else widgetTheme.mutedDay,
+                        night = if (note.encrypted) widgetTheme.accentNight else widgetTheme.mutedNight
+                    ),
                     fontSize = 11.sp
                 ),
-                maxLines = 5
+                maxLines = 1
             )
         }
     }

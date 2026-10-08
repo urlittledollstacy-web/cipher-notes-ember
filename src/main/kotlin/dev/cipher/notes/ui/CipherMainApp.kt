@@ -52,10 +52,15 @@ fun CipherMainApp(sharedText: String? = null) {
             }
 
             composable(
-                route = "detail/{noteId}?sharedText={sharedText}",
+                route = "detail/{noteId}?sharedText={sharedText}&promptSeal={promptSeal}",
                 arguments = listOf(
                     navArgument("noteId") { type = NavType.StringType },
                     navArgument("sharedText") {
+                        type = NavType.StringType
+                        nullable = true
+                        defaultValue = null
+                    },
+                    navArgument("promptSeal") {
                         type = NavType.StringType
                         nullable = true
                         defaultValue = null

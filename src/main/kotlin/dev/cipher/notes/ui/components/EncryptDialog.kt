@@ -31,13 +31,19 @@ fun EncryptDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         shape = RoundedCornerShape(28.dp),
-        title = { Text("Encrypt Note") },
+        title = { Text("Seal this note") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    text = "Locks this note with AES-256-GCM. You will need this passphrase every " +
+                        "time you open it. There is no recovery if you forget it.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
                 OutlinedTextField(
                     value = password,
                     onValueChange = { password = it },
-                    label = { Text("Password") },
+                    label = { Text("Passphrase") },
                     visualTransformation = PasswordVisualTransformation(),
                     singleLine = true,
                     shape = RoundedCornerShape(12.dp),
@@ -46,7 +52,7 @@ fun EncryptDialog(
                 OutlinedTextField(
                     value = confirm,
                     onValueChange = { confirm = it },
-                    label = { Text("Confirm Password") },
+                    label = { Text("Confirm passphrase") },
                     visualTransformation = PasswordVisualTransformation(),
                     singleLine = true,
                     shape = RoundedCornerShape(12.dp),
@@ -80,7 +86,7 @@ fun EncryptDialog(
                 onClick = { onEncrypt(password, enableBiometric) },
                 enabled = password.isNotEmpty() && password == confirm,
                 shape = RoundedCornerShape(12.dp)
-            ) { Text("Encrypt") }
+            ) { Text("Seal note") }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("Cancel") }
