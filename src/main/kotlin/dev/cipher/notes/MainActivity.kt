@@ -72,6 +72,7 @@ class MainActivity : FragmentActivity() {
 
                         LockScreen(
                             verifyPin = settingsViewModel::verifyAppPin,
+                            initialLockoutMs = settingsViewModel::activeLockoutMs,
                             biometricEnabled = biometricEnabled,
                             onUnlockRequest = {
                                 if (biometricEnabled) {
@@ -146,6 +147,7 @@ class MainActivity : FragmentActivity() {
 @Composable
 fun LockScreen(
     verifyPin: suspend (String) -> SettingsViewModel.PinResult,
+    initialLockoutMs: suspend () -> Long,
     biometricEnabled: Boolean,
     onUnlockRequest: () -> Unit,
     onAuthenticated: () -> Unit
@@ -158,6 +160,16 @@ fun LockScreen(
     val primaryColor = MaterialTheme.colorScheme.primary
 
     val lockedForMs = (lockoutUntil - now).coerceAtLeast(0L)
+
+    // The deadline is persisted, but this composable is rebuilt on rotation, so
+    // re-read it or the countdown appears to reset. On a cold start this is also
+    // what restores a lockout that was still running.
+    LaunchedEffect(Unit) {
+        val remaining = initialLockoutMs()
+        if (remaining > 0L) {
+            lockoutUntil = System.currentTimeMillis() + remaining
+        }
+    }
 
     LaunchedEffect(lockoutUntil) {
         while (System.currentTimeMillis() < lockoutUntil) {

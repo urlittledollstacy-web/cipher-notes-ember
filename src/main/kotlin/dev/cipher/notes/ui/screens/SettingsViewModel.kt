@@ -287,6 +287,18 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Remaining lockout in milliseconds, or 0 if the lock is not throttled.
+     *
+     * The lock screen needs this on composition: the deadline is persisted, but
+     * the composable holding the countdown is rebuilt on rotation, so it has to
+     * ask storage again or the lockout appears to vanish.
+     */
+    suspend fun activeLockoutMs(): Long = withContext(Dispatchers.Default) {
+        val until = dataStore.data.first()[APP_PIN_LOCKOUT_KEY] ?: 0L
+        (until - System.currentTimeMillis()).coerceAtLeast(0L)
+    }
+
     fun setAppPin(pin: String?) {
         viewModelScope.launch {
             val hashed = pin?.let { withContext(Dispatchers.Default) { PinHasher.hash(it) } }
