@@ -346,7 +346,6 @@ class NoteEditorViewModel @Inject constructor(
                     hasBiometric = false,
                     error = null
                 ) }
-                kotlinx.coroutines.delay(100)
             } catch (e: Exception) {
                 _uiState.update { it.copy(error = "Unseal failed") }
             }

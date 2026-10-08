@@ -33,11 +33,6 @@ import dev.cipher.notes.ui.theme.CipherTheme
 import dev.cipher.notes.ui.theme.ThemeMode
 import kotlinx.coroutines.launch
 
-// The app lock stands in front of every note, so it throttles like the note
-// unlock rather than allowing unlimited 4-digit guesses.
-private const val MAX_PIN_ATTEMPTS = 5
-private const val BASE_PIN_LOCKOUT_MS = 5_000L
-
 @AndroidEntryPoint
 class MainActivity : FragmentActivity() {
 
@@ -57,7 +52,9 @@ class MainActivity : FragmentActivity() {
             val isAppLockEnabled by settingsViewModel.isAppLockEnabled.collectAsState(initial = false)
             val isBiometricEnabledState by settingsViewModel.isBiometricEnabled.collectAsState(initial = null)
 
-            var isAuthenticated by remember { mutableStateOf(false) }
+            // Authentication alone is remembered here, so rotation does not re-lock.
+            val appLockViewModel: AppLockViewModel = hiltViewModel()
+            val isAuthenticated = appLockViewModel.isAuthenticated
 
             CipherTheme(
                 themeMode = themeMode,
@@ -79,12 +76,12 @@ class MainActivity : FragmentActivity() {
                             onUnlockRequest = {
                                 if (biometricEnabled) {
                                     showBiometricPrompt(
-                                        onSuccess = { isAuthenticated = true },
+                                        onSuccess = { appLockViewModel.markAuthenticated() },
                                         onError = { /* or type PIN */ }
                                     )
                                 }
                             },
-                            onAuthenticated = { isAuthenticated = true }
+                            onAuthenticated = { appLockViewModel.markAuthenticated() }
                         )
                     } else {
                         CipherMainApp(sharedText = sharedText)
@@ -148,15 +145,15 @@ class MainActivity : FragmentActivity() {
 
 @Composable
 fun LockScreen(
-    verifyPin: suspend (String) -> Boolean,
+    verifyPin: suspend (String) -> SettingsViewModel.PinResult,
     biometricEnabled: Boolean,
     onUnlockRequest: () -> Unit,
     onAuthenticated: () -> Unit
 ) {
     var enteredPin by remember { mutableStateOf("") }
-    var failedAttempts by remember { mutableStateOf(0) }
     var lockoutUntil by remember { mutableStateOf(0L) }
     var now by remember { mutableStateOf(System.currentTimeMillis()) }
+    var isVerifying by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val primaryColor = MaterialTheme.colorScheme.primary
 
@@ -248,25 +245,22 @@ fun LockScreen(
                                 onClick = {
                                     if (digit == "C") {
                                         if (enteredPin.isNotEmpty()) enteredPin = enteredPin.dropLast(1)
-                                    } else if (enteredPin.length < 4 && lockedForMs <= 0L) {
+                                    } else if (enteredPin.length < 4 && lockedForMs <= 0L && !isVerifying) {
                                         enteredPin += digit
                                         if (enteredPin.length == 4) {
                                             val attempt = enteredPin
                                             enteredPin = ""
+                                            isVerifying = true
                                             scope.launch {
-                                                if (verifyPin(attempt)) {
-                                                    failedAttempts = 0
-                                                    onAuthenticated()
-                                                } else {
-                                                    failedAttempts++
-                                                    if (failedAttempts >= MAX_PIN_ATTEMPTS) {
-                                                        // A 4-digit PIN is only 10k
-                                                        // combinations; this is what
-                                                        // stops them being tried in bulk.
-                                                        lockoutUntil = System.currentTimeMillis() +
-                                                            BASE_PIN_LOCKOUT_MS * (1L shl (failedAttempts - MAX_PIN_ATTEMPTS).coerceAtMost(6))
-                                                    }
+                                                when (val result = verifyPin(attempt)) {
+                                                    is SettingsViewModel.PinResult.Success -> onAuthenticated()
+                                                    // Use the real remaining time so the
+                                                    // countdown reflects what is persisted.
+                                                    is SettingsViewModel.PinResult.Locked ->
+                                                        lockoutUntil = System.currentTimeMillis() + result.remainingMs
+                                                    is SettingsViewModel.PinResult.Wrong -> Unit
                                                 }
+                                                isVerifying = false
                                             }
                                         }
                                     }
