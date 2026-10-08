@@ -21,6 +21,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -30,9 +31,11 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import dagger.hilt.android.AndroidEntryPoint
 import dev.cipher.notes.crypto.BiometricPromptManager
 import dev.cipher.notes.ui.CipherMainApp
+import dev.cipher.notes.ui.LockLayout
 import dev.cipher.notes.ui.screens.SettingsViewModel
 import dev.cipher.notes.ui.theme.CipherTheme
 import dev.cipher.notes.ui.theme.ThemeMode
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @AndroidEntryPoint
@@ -49,18 +52,79 @@ class MainActivity : FragmentActivity() {
 
         setContent {
             val settingsViewModel: SettingsViewModel = hiltViewModel()
-            val useDynamicColors by settingsViewModel.useDynamicColors.collectAsState(initial = true)
-            val themeMode by settingsViewModel.themeMode.collectAsState(initial = ThemeMode.DEFAULT)
-            val isAppLockEnabled by settingsViewModel.isAppLockEnabled.collectAsState(initial = false)
+            val appLockViewModel: AppLockViewModel = hiltViewModel()
+
+            val useDynamicColors by settingsViewModel.useDynamicColors.collectAsState(initial = null)
+            val themeMode by settingsViewModel.themeMode.collectAsState(initial = null)
+            val isAppLockEnabled by settingsViewModel.isAppLockEnabled.collectAsState(initial = null)
             val isBiometricEnabledState by settingsViewModel.isBiometricEnabled.collectAsState(initial = null)
 
-            // Authentication alone is remembered here, so rotation does not re-lock.
-            val appLockViewModel: AppLockViewModel = hiltViewModel()
-            val isAuthenticated = appLockViewModel.isAuthenticated
+            val dynamicColors = useDynamicColors ?: appLockViewModel.dynamicColors
+            val resolvedTheme = themeMode ?: appLockViewModel.themeMode
+            val lockEnabled = isAppLockEnabled ?: appLockViewModel.isAppLockEnabled
+
+            // Give storage a moment to emit. A read normally resolves in
+            // milliseconds; if it cannot, waiting forever would mean a blank
+            // screen the user can never get past, so fall back below.
+            var timedOut by remember { mutableStateOf(false) }
+            LaunchedEffect(dynamicColors, resolvedTheme, lockEnabled) {
+                if (dynamicColors == null || resolvedTheme == null || lockEnabled == null) {
+                    delay(GATE_TIMEOUT_MS)
+                    timedOut = true
+                }
+            }
+
+            // Unknown on a cold start (covered by the splash) or a slow read:
+            // draw only the window background. It must never guess, and never
+            // compose the notes before the lock state is known.
+            if (dynamicColors == null || resolvedTheme == null || lockEnabled == null) {
+                if (!timedOut) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(colorResource(id = R.color.void_bg))
+                    )
+                    return@setContent
+                }
+                // Storage did not answer in time (corrupt or unreadable file).
+                // Do not guess a theme, and do not compose the notes: a wrong
+                // theme is cosmetic, but a missed lock would expose them. So
+                // show the lock and let the user retry.
+                val fallbackTheme = appLockViewModel.themeMode ?: ThemeMode.DEFAULT
+                val fallbackColors = appLockViewModel.dynamicColors ?: false
+                val fallbackLock = appLockViewModel.isAppLockEnabled ?: true
+                CipherTheme(themeMode = fallbackTheme, dynamicColors = fallbackColors) {
+                    ThemedSystemBars()
+                    Surface(
+                        modifier = Modifier.fillMaxSize(),
+                        color = MaterialTheme.colorScheme.background
+                    ) {
+                        if (fallbackLock && !appLockViewModel.isAuthenticated) {
+                            LockScreen(
+                                verifyPin = settingsViewModel::verifyAppPin,
+                                initialLockoutMs = settingsViewModel::activeLockoutMs,
+                                biometricEnabled = false,
+                                onUnlockRequest = {},
+                                onAuthenticated = { appLockViewModel.markAuthenticated() }
+                            )
+                        } else {
+                            StorageUnavailableMessage()
+                        }
+                    }
+                }
+                return@setContent
+            }
+
+            // Remember the resolved values so a recreated activity (rotation)
+            // paints correctly on its first frame instead of guessing.
+            SideEffect {
+                appLockViewModel.cacheTheme(dynamicColors, resolvedTheme)
+                appLockViewModel.cacheLockEnabled(lockEnabled)
+            }
 
             CipherTheme(
-                themeMode = themeMode,
-                dynamicColors = useDynamicColors
+                themeMode = resolvedTheme,
+                dynamicColors = dynamicColors
             ) {
                 ThemedSystemBars()
 
@@ -68,7 +132,7 @@ class MainActivity : FragmentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    if (isAppLockEnabled && !isAuthenticated) {
+                    if (lockEnabled && !appLockViewModel.isAuthenticated) {
                         val biometricEnabled = (isBiometricEnabledState == true) &&
                                 BiometricPromptManager.canAuthenticate(this@MainActivity)
 
@@ -228,26 +292,31 @@ fun LockScreen(
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
     ) {
-        val shortScreen = maxHeight < LOCK_LANDSCAPE_MIN_HEIGHT
-        val availableHeight = maxHeight
-        // A split-screen window is shorter than any phone. Shrink the keypad so
-        // it still fits whole: scrolling a keypad is unusable, because you
-        // cannot see the digits you are trying to reach.
-        val compact = maxHeight < LOCK_COMPACT_MIN_HEIGHT
-        val buttonSize = when {
-            compact -> 44.dp
-            shortScreen -> 52.dp
-            else -> 64.dp
+        val wide = LockLayout.isWide(maxWidth.value, maxHeight.value)
+        val pad = LOCK_PAD.dp
+        // The keypad is sized from the space it is actually given, so it cannot
+        // overflow on any screen. In the side-by-side layout it shares the width
+        // with the header.
+        val areaWidth = (maxWidth.value - 2 * LOCK_PAD - if (wide) LOCK_COLUMN_GAP else 0f)
+            .let { if (wide) it / 2 else it }
+        val boxHeight = maxHeight
+        val areaHeight = (maxHeight.value - 2 * LOCK_PAD)
+        val keySize = if (wide) {
+            LockLayout.keySizeDp(areaWidth, areaHeight, LockLayout.WIDE_KEY_DP).dp
+        } else {
+            LockLayout.keySizeDp(areaWidth, areaHeight).dp
         }
-        val gutter = if (compact) 12.dp else 24.dp
+        // In the side-by-side layout the header has the full window height, so
+        // there is no reason to shrink it; only the stacked layout scales it.
+        val headerScale = if (wide) 1f else LockLayout.headerScale(keySize.value)
         Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-            if (shortScreen) {
+            if (wide) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(min = availableHeight)
-                        .padding(gutter),
-                    horizontalArrangement = Arrangement.spacedBy(if (compact) 12.dp else 32.dp),
+                        .heightIn(min = boxHeight)
+                        .padding(pad),
+                    horizontalArrangement = Arrangement.spacedBy(LOCK_COLUMN_GAP.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Keypad(
@@ -255,7 +324,7 @@ fun LockScreen(
                         lockedForMs = lockedForMs,
                         onDigit = onDigit,
                         primaryColor = primaryColor,
-                        buttonSize = buttonSize,
+                        buttonSize = keySize,
                         modifier = Modifier.weight(1f)
                     )
                     Column(
@@ -267,7 +336,7 @@ fun LockScreen(
                             biometricEnabled = biometricEnabled,
                             primaryColor = primaryColor,
                             onUnlockRequest = onUnlockRequest,
-                            compact = compact
+                            scale = headerScale
                         )
                     }
                 }
@@ -275,8 +344,8 @@ fun LockScreen(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(min = availableHeight)
-                        .padding(gutter),
+                        .heightIn(min = boxHeight)
+                        .padding(pad),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.SpaceEvenly
                 ) {
@@ -284,14 +353,15 @@ fun LockScreen(
                         enteredPin = enteredPin,
                         biometricEnabled = biometricEnabled,
                         primaryColor = primaryColor,
-                        onUnlockRequest = onUnlockRequest
+                        onUnlockRequest = onUnlockRequest,
+                        scale = headerScale
                     )
                     Keypad(
                         rows = rows,
                         lockedForMs = lockedForMs,
                         onDigit = onDigit,
                         primaryColor = primaryColor,
-                        buttonSize = buttonSize
+                        buttonSize = keySize
                     )
                     BiometricUnlockButton(
                         biometricEnabled = biometricEnabled,
@@ -304,9 +374,32 @@ fun LockScreen(
     }
 }
 
-private val LOCK_LANDSCAPE_MIN_HEIGHT = 420.dp
-private val LOCK_COMPACT_MIN_HEIGHT = 300.dp
-private const val LOCK_KEYPAD_WIDTH = 260
+private const val LOCK_PAD = 16f
+private const val LOCK_COLUMN_GAP = 24f
+
+/**
+ * How long to wait for the settings before falling back. Long enough that a
+ * normal read always wins, short enough that a broken one does not look like
+ * a hang.
+ */
+private const val GATE_TIMEOUT_MS = 2000L
+
+/**
+ * Shown when settings could not be read and the lock is configured off, so
+ * there is nothing to unlock. Entering the notes would mean composing them on
+ * an unverified state; this explains the situation instead.
+ */
+@Composable
+private fun StorageUnavailableMessage() {
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Text(
+            text = "Settings could not be loaded.\nRestart the app, or reinstall if this persists.",
+            textAlign = TextAlign.Center,
+            style = MaterialTheme.typography.bodyLarge,
+            modifier = Modifier.padding(32.dp)
+        )
+    }
+}
 
 /** Fingerprint button, title and the four PIN dots. */
 @Composable
@@ -316,10 +409,10 @@ private fun LockHeader(
     primaryColor: androidx.compose.ui.graphics.Color,
     onUnlockRequest: () -> Unit,
     modifier: Modifier = Modifier,
-    compact: Boolean = false
+    scale: Float = 1f
 ) {
-    val iconSize = if (compact) 40.dp else 64.dp
-    val dotSize = if (compact) 12.dp else 16.dp
+    val iconSize = (64 * scale).dp
+    val dotSize = (16 * scale).dp
     Column(
         modifier = modifier,
         horizontalAlignment = Alignment.CenterHorizontally
@@ -332,14 +425,14 @@ private fun LockHeader(
                 .clickable(enabled = biometricEnabled) { onUnlockRequest() },
             tint = if (biometricEnabled) primaryColor else primaryColor.copy(alpha = 0.2f)
         )
-        Spacer(modifier = Modifier.height(if (compact) 8.dp else 16.dp))
+        Spacer(modifier = Modifier.height((16 * scale).dp))
         Text(
             text = "CipherNotes Locked",
-            style = if (compact) MaterialTheme.typography.titleMedium else MaterialTheme.typography.headlineSmall,
+            style = if (scale < 0.8f) MaterialTheme.typography.titleMedium else MaterialTheme.typography.headlineSmall,
             fontWeight = FontWeight.Bold
         )
-        Spacer(modifier = Modifier.height(if (compact) 16.dp else 32.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(if (compact) 12.dp else 16.dp)) {
+        Spacer(modifier = Modifier.height((24 * scale).dp))
+        Row(horizontalArrangement = Arrangement.spacedBy((12 * scale).dp)) {
             repeat(4) { index ->
                 val isFilled = index < enteredPin.length
                 Surface(
@@ -379,8 +472,8 @@ private fun Keypad(
     buttonSize: androidx.compose.ui.unit.Dp = 64.dp
 ) {
     Column(
-        modifier = modifier.widthIn(max = LOCK_KEYPAD_WIDTH.dp),
-        verticalArrangement = Arrangement.spacedBy(if (buttonSize < 64.dp) 10.dp else 16.dp)
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy((buttonSize.value * 0.25f).dp)
     ) {
         if (lockedForMs > 0L) {
             Text(

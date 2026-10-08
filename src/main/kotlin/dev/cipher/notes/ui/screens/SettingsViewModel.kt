@@ -76,6 +76,36 @@ class SettingsViewModel @Inject constructor(
 
     val allNotes: Flow<List<Note>> = repo.getAllNotes()
 
+    /**
+     * Everything the settings screen displays, resolved in one read.
+     *
+     * Collecting each key separately forced a guessed `initial` per key, and a
+     * rotated screen painted those guesses for a frame: the theme showed as
+     * Ember Archive, dynamic colours as on, the lock and PIN toggles wrong.
+     * One snapshot removes the guesses at the source.
+     */
+    data class SettingsUiState(
+        val dynamicColors: Boolean,
+        val themeMode: ThemeMode,
+        val appLockEnabled: Boolean,
+        val biometricEnabled: Boolean,
+        val widgetContentVisible: Boolean,
+        val sealNewNotesByDefault: Boolean,
+        val appPinSet: Boolean
+    )
+
+    val uiState: Flow<SettingsUiState> = dataStore.data.map { preferences ->
+        SettingsUiState(
+            dynamicColors = preferences[DYNAMIC_COLORS_KEY] ?: true,
+            themeMode = resolveThemeMode(preferences),
+            appLockEnabled = preferences[APP_LOCK_KEY] ?: false,
+            biometricEnabled = preferences[BIOMETRIC_ENABLED_KEY] ?: true,
+            widgetContentVisible = preferences[WIDGET_CONTENT_VISIBLE_KEY] ?: false,
+            sealNewNotesByDefault = preferences[SEAL_NEW_NOTES_KEY] ?: true,
+            appPinSet = preferences[APP_PIN_KEY] != null
+        )
+    }
+
     val pinnedNoteIds: Flow<Set<String>> = dataStore.data.map { preferences ->
         preferences[SELECTED_NOTE_IDS_KEY] ?: emptySet()
     }
@@ -110,19 +140,20 @@ class SettingsViewModel @Inject constructor(
     // Existing installs only ever had the dynamic-colors boolean. Read the new
     // key first, then default: dynamic off meant the user wanted Ember, dynamic
     // on (the default they never touched) meant Light.
-    val themeMode: Flow<ThemeMode> = dataStore.data
-        .map { preferences ->
-            val stored = preferences[THEME_MODE_KEY]
-            if (stored != null) {
-                ThemeMode.fromKey(stored)
-            } else {
-                when (preferences[DYNAMIC_COLORS_KEY]) {
-                    false -> ThemeMode.EMBER
-                    true -> ThemeMode.LIGHT
-                    null -> ThemeMode.DEFAULT
-                }
+    private fun resolveThemeMode(preferences: Preferences): ThemeMode {
+        val stored = preferences[THEME_MODE_KEY]
+        return if (stored != null) {
+            ThemeMode.fromKey(stored)
+        } else {
+            when (preferences[DYNAMIC_COLORS_KEY]) {
+                false -> ThemeMode.EMBER
+                true -> ThemeMode.LIGHT
+                null -> ThemeMode.DEFAULT
             }
         }
+    }
+
+    val themeMode: Flow<ThemeMode> = dataStore.data.map { resolveThemeMode(it) }
 
     fun setThemeMode(mode: ThemeMode) {
         viewModelScope.launch {
