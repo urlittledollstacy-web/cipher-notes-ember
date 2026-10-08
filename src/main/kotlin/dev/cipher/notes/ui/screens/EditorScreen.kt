@@ -112,6 +112,7 @@ fun EditorScreen(
 
     var showEncryptDialog by remember { mutableStateOf(false) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
+    var showUnsealConfirm by remember { mutableStateOf(false) }
     var unlockPassword by remember { mutableStateOf("") }
     var isPreviewMode by remember { mutableStateOf(false) }
 
@@ -161,6 +162,11 @@ fun EditorScreen(
                         }
                         IconButton(onClick = { showEncryptDialog = true }) {
                             Icon(Icons.Rounded.Lock, contentDescription = "Encrypt")
+                        }
+                        if (uiState.encrypted) {
+                            IconButton(onClick = { showUnsealConfirm = true }) {
+                                Icon(Icons.Rounded.LockOpen, contentDescription = "Unseal")
+                            }
                         }
                     }
                     IconButton(onClick = { showDeleteConfirm = true }) {
@@ -359,6 +365,23 @@ fun EditorScreen(
                 vm.dismissSealPrompt()
                 showEncryptDialog = false
             }
+        )
+    }
+
+    if (showUnsealConfirm) {
+        AlertDialog(
+            onDismissRequest = { showUnsealConfirm = false },
+            shape = RoundedCornerShape(28.dp),
+            icon = { Icon(Icons.Rounded.LockOpen, null, tint = MaterialTheme.colorScheme.error) },
+            title = { Text("Unseal note?") },
+            text = { Text("This removes the seal and stores the note unencrypted on this device. Anyone with access to the device could read it.") },
+            confirmButton = {
+                Button(
+                    onClick = { vm.unseal(); showUnsealConfirm = false },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) { Text("Unseal") }
+            },
+            dismissButton = { TextButton(onClick = { showUnsealConfirm = false }) { Text("Cancel") } }
         )
     }
 
