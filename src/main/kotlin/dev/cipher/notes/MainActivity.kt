@@ -31,6 +31,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import dagger.hilt.android.AndroidEntryPoint
 import dev.cipher.notes.crypto.BiometricPromptManager
 import dev.cipher.notes.ui.CipherMainApp
+import dev.cipher.notes.ui.LockLayout
 import dev.cipher.notes.ui.screens.SettingsViewModel
 import dev.cipher.notes.ui.theme.CipherTheme
 import dev.cipher.notes.ui.theme.ThemeMode
@@ -291,26 +292,25 @@ fun LockScreen(
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
     ) {
-        val shortScreen = maxHeight < LOCK_LANDSCAPE_MIN_HEIGHT
-        val availableHeight = maxHeight
-        // A split-screen window is shorter than any phone. Shrink the keypad so
-        // it still fits whole: scrolling a keypad is unusable, because you
-        // cannot see the digits you are trying to reach.
-        val compact = maxHeight < LOCK_COMPACT_MIN_HEIGHT
-        val buttonSize = when {
-            compact -> 44.dp
-            shortScreen -> 52.dp
-            else -> 64.dp
-        }
-        val gutter = if (compact) 12.dp else 24.dp
+        val wide = LockLayout.isWide(maxWidth.value, maxHeight.value)
+        val pad = LOCK_PAD.dp
+        // The keypad is sized from the space it is actually given, so it cannot
+        // overflow on any screen. In the side-by-side layout it shares the width
+        // with the header.
+        val areaWidth = (maxWidth.value - 2 * LOCK_PAD - if (wide) LOCK_COLUMN_GAP else 0f)
+            .let { if (wide) it / 2 else it }
+        val boxHeight = maxHeight
+        val areaHeight = (maxHeight.value - 2 * LOCK_PAD)
+        val keySize = LockLayout.keySizeDp(areaWidth, areaHeight).dp
+        val headerScale = LockLayout.headerScale(keySize.value)
         Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-            if (shortScreen) {
+            if (wide) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(min = availableHeight)
-                        .padding(gutter),
-                    horizontalArrangement = Arrangement.spacedBy(if (compact) 12.dp else 32.dp),
+                        .heightIn(min = boxHeight)
+                        .padding(pad),
+                    horizontalArrangement = Arrangement.spacedBy(LOCK_COLUMN_GAP.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Keypad(
@@ -318,7 +318,7 @@ fun LockScreen(
                         lockedForMs = lockedForMs,
                         onDigit = onDigit,
                         primaryColor = primaryColor,
-                        buttonSize = buttonSize,
+                        buttonSize = keySize,
                         modifier = Modifier.weight(1f)
                     )
                     Column(
@@ -330,7 +330,7 @@ fun LockScreen(
                             biometricEnabled = biometricEnabled,
                             primaryColor = primaryColor,
                             onUnlockRequest = onUnlockRequest,
-                            compact = compact
+                            scale = headerScale
                         )
                     }
                 }
@@ -338,8 +338,8 @@ fun LockScreen(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(min = availableHeight)
-                        .padding(gutter),
+                        .heightIn(min = boxHeight)
+                        .padding(pad),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.SpaceEvenly
                 ) {
@@ -347,14 +347,15 @@ fun LockScreen(
                         enteredPin = enteredPin,
                         biometricEnabled = biometricEnabled,
                         primaryColor = primaryColor,
-                        onUnlockRequest = onUnlockRequest
+                        onUnlockRequest = onUnlockRequest,
+                        scale = headerScale
                     )
                     Keypad(
                         rows = rows,
                         lockedForMs = lockedForMs,
                         onDigit = onDigit,
                         primaryColor = primaryColor,
-                        buttonSize = buttonSize
+                        buttonSize = keySize
                     )
                     BiometricUnlockButton(
                         biometricEnabled = biometricEnabled,
@@ -367,9 +368,8 @@ fun LockScreen(
     }
 }
 
-private val LOCK_LANDSCAPE_MIN_HEIGHT = 420.dp
-private val LOCK_COMPACT_MIN_HEIGHT = 300.dp
-private const val LOCK_KEYPAD_WIDTH = 260
+private const val LOCK_PAD = 16f
+private const val LOCK_COLUMN_GAP = 24f
 
 /**
  * How long to wait for the settings before falling back. Long enough that a
@@ -403,10 +403,10 @@ private fun LockHeader(
     primaryColor: androidx.compose.ui.graphics.Color,
     onUnlockRequest: () -> Unit,
     modifier: Modifier = Modifier,
-    compact: Boolean = false
+    scale: Float = 1f
 ) {
-    val iconSize = if (compact) 40.dp else 64.dp
-    val dotSize = if (compact) 12.dp else 16.dp
+    val iconSize = (64 * scale).dp
+    val dotSize = (16 * scale).dp
     Column(
         modifier = modifier,
         horizontalAlignment = Alignment.CenterHorizontally
@@ -419,14 +419,14 @@ private fun LockHeader(
                 .clickable(enabled = biometricEnabled) { onUnlockRequest() },
             tint = if (biometricEnabled) primaryColor else primaryColor.copy(alpha = 0.2f)
         )
-        Spacer(modifier = Modifier.height(if (compact) 8.dp else 16.dp))
+        Spacer(modifier = Modifier.height((16 * scale).dp))
         Text(
             text = "CipherNotes Locked",
-            style = if (compact) MaterialTheme.typography.titleMedium else MaterialTheme.typography.headlineSmall,
+            style = if (scale < 0.8f) MaterialTheme.typography.titleMedium else MaterialTheme.typography.headlineSmall,
             fontWeight = FontWeight.Bold
         )
-        Spacer(modifier = Modifier.height(if (compact) 16.dp else 32.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(if (compact) 12.dp else 16.dp)) {
+        Spacer(modifier = Modifier.height((24 * scale).dp))
+        Row(horizontalArrangement = Arrangement.spacedBy((12 * scale).dp)) {
             repeat(4) { index ->
                 val isFilled = index < enteredPin.length
                 Surface(
@@ -466,8 +466,8 @@ private fun Keypad(
     buttonSize: androidx.compose.ui.unit.Dp = 64.dp
 ) {
     Column(
-        modifier = modifier.widthIn(max = LOCK_KEYPAD_WIDTH.dp),
-        verticalArrangement = Arrangement.spacedBy(if (buttonSize < 64.dp) 10.dp else 16.dp)
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy((buttonSize.value * 0.25f).dp)
     ) {
         if (lockedForMs > 0L) {
             Text(
