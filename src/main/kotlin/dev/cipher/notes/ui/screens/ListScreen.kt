@@ -275,7 +275,12 @@ fun ListScreen(
             onDismiss = { showCreateSheet = false },
             onCreateNote = { type ->
                 showCreateSheet = false
-                vm.createNote(type) { id -> onNoteClick(openCreated(id)) }
+                vm.createNote(type) { id ->
+                    // Respect seal-by-default here too; the previous default of
+                    // "seal = true" ignored the setting entirely. If it has not
+                    // loaded yet, prompt rather than write an unsealed note.
+                    onNoteClick(openCreated(id, seal = sealByDefault != false))
+                }
             }
         )
     }
