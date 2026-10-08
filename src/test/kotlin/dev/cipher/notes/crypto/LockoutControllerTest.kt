@@ -60,6 +60,22 @@ class LockoutControllerTest {
     }
 
     @Test
+    fun `each failure advances one rung and the wait is capped`() = kotlinx.coroutines.runBlocking {
+        val controller = LockoutController(store)
+        // 4 failures: still below the threshold.
+        repeat(4) { assertEquals(0L, controller.recordFailure(noteId, 0L)) }
+
+        // 5th..11th: 5,10,20,40,80,160,320 seconds — one rung per failure.
+        val expected = listOf(5_000L, 10_000L, 20_000L, 40_000L, 80_000L, 160_000L, 320_000L)
+        for (ms in expected) {
+            assertEquals(ms, controller.recordFailure(noteId, 0L))
+        }
+
+        // Past the cap it stops growing, so a flood cannot walk it up further.
+        assertEquals(320_000L, controller.recordFailure(noteId, 0L))
+    }
+
+    @Test
     fun `a correct password clears the wait`() = kotlinx.coroutines.runBlocking {
         val controller = LockoutController(store)
         repeat(PinThrottle.MAX_ATTEMPTS + 2) { controller.recordFailure(noteId, 1_000L) }
