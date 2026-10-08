@@ -44,7 +44,9 @@ data class EditorUiState(
     val hasBiometric: Boolean = false,
     val isLoading: Boolean = false,
     val error: String? = null,
-    val promptSeal: Boolean = false
+    val promptSeal: Boolean = false,
+    /** Wall-clock instant the unlock lockout ends, for a live countdown. 0 when not locked out. */
+    val lockoutUntil: Long = 0L
 )
 
 @HiltViewModel
@@ -336,7 +338,11 @@ class NoteEditorViewModel @Inject constructor(
             val remainingMs = lockout.remainingLockoutMs(id, System.currentTimeMillis())
             if (remainingMs > 0) {
                 _uiState.update {
-                    it.copy(error = "Too many attempts. Try again in ${(remainingMs / 1000) + 1}s", isLocked = true)
+                    it.copy(
+                        error = "Too many attempts",
+                        isLocked = true,
+                        lockoutUntil = System.currentTimeMillis() + remainingMs
+                    )
                 }
                 return@launch
             }
@@ -363,18 +369,15 @@ class NoteEditorViewModel @Inject constructor(
                         JsonUtils.jsonToTodoItems(payload.optString("items", "[]"))
                     } else emptyList(),
                     hasBiometric = crypto.hasBiometricPassword(id),
-                    error = null
+                    error = null,
+                    lockoutUntil = 0L
                 ) }
             } catch (e: Exception) {
                 val backoff = lockout.recordFailure(id, System.currentTimeMillis())
-                val lockMessage = if (backoff > 0L) {
-                    "Wrong password. Locked for ${(backoff / 1000) + 1}s"
-                } else {
-                    "Wrong password"
-                }
                 _uiState.update { it.copy(
-                    error = lockMessage,
-                    isLocked = true
+                    error = "Wrong password",
+                    isLocked = true,
+                    lockoutUntil = if (backoff > 0L) System.currentTimeMillis() + backoff else 0L
                 ) }
             }
         }

@@ -39,6 +39,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import dev.cipher.notes.crypto.BiometricPromptManager
 import dev.cipher.notes.data.TodoItem
 import dev.cipher.notes.ui.components.EncryptDialog
+import dev.cipher.notes.ui.components.UnlockCountdown
 import dev.cipher.notes.utils.DateUtils
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -160,6 +161,7 @@ fun TodoScreen(
                 if (uiState.error != null) {
                     Text(uiState.error!!, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 8.dp))
                 }
+                UnlockCountdown(uiState.lockoutUntil, modifier = Modifier.padding(top = 4.dp))
                 Button(
                     onClick = { vm.unlock(passwordInput) },
                     modifier = Modifier
