@@ -69,6 +69,14 @@ is a decision for the maintainer, not CI.
   the Material You theme over a custom one; guessing `isAppLockEnabled = false`
   composed the notes before the lock state arrived (fail-open). Collect with
   `initial = null` and render only the window background until known.
+- Fixing the gate in `MainActivity` is **not enough**. Any screen that
+  re-reads the same DataStore keys with its own `initial` guesses re-creates
+  the bug below the gate. `SettingsScreen` did: seven guessed keys made the
+  theme radio draw "Ember Archive" (`ThemeMode.DEFAULT`) and the dynamic
+  colours toggle draw on, for a frame, on rotation. Resolve the screen's
+  settings as one snapshot and gate on that, rather than one `initial` per key.
+- `ThemeMode.DEFAULT == EMBER` ("Ember Archive"), the first enum entry. It is
+  what a guessed theme value shows.
 - The unit tests are pure logic (hashing, throttle backoff, theme constants,
   widget text). They do not exercise Compose, so state-reactivity and layout
   regressions are invisible to them; those need a device.
