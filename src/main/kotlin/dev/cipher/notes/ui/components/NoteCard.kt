@@ -55,7 +55,6 @@ fun SwipeToDeleteNoteCard(
     onSwipeDelete: () -> Unit,
     modifier: Modifier = Modifier,
     isPinned: Boolean = false,
-    hasBiometric: Boolean = false,
     onPinClick: (() -> Unit)? = null
 ) {
     val haptics = LocalHapticFeedback.current
@@ -108,7 +107,6 @@ fun SwipeToDeleteNoteCard(
             note = note,
             onClick = onClick,
             isPinned = isPinned,
-            hasBiometric = hasBiometric,
             onPinClick = onPinClick
         )
     }
