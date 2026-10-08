@@ -56,3 +56,19 @@ The release variant is deliberately not built here: `assembleRelease`
 produces an *unsigned* APK (no signing config in `build.gradle.kts`), which
 Android will not install. Signing a release build needs a keystore, which
 is a decision for the maintainer, not CI.
+
+## Gotchas hit during the reskin
+
+- `SavedStateHandle.get()` is **not** observable. State read this way during
+  composition does not recompose when it changes (`markAuthenticated()` set
+  the handle and the lock screen never advanced). Use `mutableStateOf`, or
+  `getStateFlow` / `getLiveData` if the handle must be the source of truth.
+- Async reads must not be guessed with `collectAsState(initial = ...)`.
+  DataStore/Room have not emitted on the first frame after a rotation, so the
+  `initial` value is what gets painted. Guessing `dynamicColors = true` flashed
+  the Material You theme over a custom one; guessing `isAppLockEnabled = false`
+  composed the notes before the lock state arrived (fail-open). Collect with
+  `initial = null` and render only the window background until known.
+- The unit tests are pure logic (hashing, throttle backoff, theme constants,
+  widget text). They do not exercise Compose, so state-reactivity and layout
+  regressions are invisible to them; those need a device.
