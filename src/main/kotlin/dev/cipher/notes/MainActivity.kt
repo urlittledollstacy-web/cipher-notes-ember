@@ -34,6 +34,7 @@ import dev.cipher.notes.ui.CipherMainApp
 import dev.cipher.notes.ui.screens.SettingsViewModel
 import dev.cipher.notes.ui.theme.CipherTheme
 import dev.cipher.notes.ui.theme.ThemeMode
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @AndroidEntryPoint
@@ -61,15 +62,55 @@ class MainActivity : FragmentActivity() {
             val resolvedTheme = themeMode ?: appLockViewModel.themeMode
             val lockEnabled = isAppLockEnabled ?: appLockViewModel.isAppLockEnabled
 
+            // Give storage a moment to emit. A read normally resolves in
+            // milliseconds; if it cannot, waiting forever would mean a blank
+            // screen the user can never get past, so fall back below.
+            var timedOut by remember { mutableStateOf(false) }
+            LaunchedEffect(dynamicColors, resolvedTheme, lockEnabled) {
+                if (dynamicColors == null || resolvedTheme == null || lockEnabled == null) {
+                    delay(GATE_TIMEOUT_MS)
+                    timedOut = true
+                }
+            }
+
             // Unknown on a cold start (covered by the splash) or a slow read:
             // draw only the window background. It must never guess, and never
             // compose the notes before the lock state is known.
             if (dynamicColors == null || resolvedTheme == null || lockEnabled == null) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(colorResource(id = R.color.void_bg))
-                )
+                if (!timedOut) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(colorResource(id = R.color.void_bg))
+                    )
+                    return@setContent
+                }
+                // Storage did not answer in time (corrupt or unreadable file).
+                // Do not guess a theme, and do not compose the notes: a wrong
+                // theme is cosmetic, but a missed lock would expose them. So
+                // show the lock and let the user retry.
+                val fallbackTheme = appLockViewModel.themeMode ?: ThemeMode.DEFAULT
+                val fallbackColors = appLockViewModel.dynamicColors ?: false
+                val fallbackLock = appLockViewModel.isAppLockEnabled ?: true
+                CipherTheme(themeMode = fallbackTheme, dynamicColors = fallbackColors) {
+                    ThemedSystemBars()
+                    Surface(
+                        modifier = Modifier.fillMaxSize(),
+                        color = MaterialTheme.colorScheme.background
+                    ) {
+                        if (fallbackLock && !appLockViewModel.isAuthenticated) {
+                            LockScreen(
+                                verifyPin = settingsViewModel::verifyAppPin,
+                                initialLockoutMs = settingsViewModel::activeLockoutMs,
+                                biometricEnabled = false,
+                                onUnlockRequest = {},
+                                onAuthenticated = { appLockViewModel.markAuthenticated() }
+                            )
+                        } else {
+                            StorageUnavailableMessage()
+                        }
+                    }
+                }
                 return@setContent
             }
 
@@ -329,6 +370,30 @@ fun LockScreen(
 private val LOCK_LANDSCAPE_MIN_HEIGHT = 420.dp
 private val LOCK_COMPACT_MIN_HEIGHT = 300.dp
 private const val LOCK_KEYPAD_WIDTH = 260
+
+/**
+ * How long to wait for the settings before falling back. Long enough that a
+ * normal read always wins, short enough that a broken one does not look like
+ * a hang.
+ */
+private const val GATE_TIMEOUT_MS = 2000L
+
+/**
+ * Shown when settings could not be read and the lock is configured off, so
+ * there is nothing to unlock. Entering the notes would mean composing them on
+ * an unverified state; this explains the situation instead.
+ */
+@Composable
+private fun StorageUnavailableMessage() {
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Text(
+            text = "Settings could not be loaded.\nRestart the app, or reinstall if this persists.",
+            textAlign = TextAlign.Center,
+            style = MaterialTheme.typography.bodyLarge,
+            modifier = Modifier.padding(32.dp)
+        )
+    }
+}
 
 /** Fingerprint button, title and the four PIN dots. */
 @Composable
