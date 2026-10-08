@@ -301,8 +301,14 @@ fun LockScreen(
             .let { if (wide) it / 2 else it }
         val boxHeight = maxHeight
         val areaHeight = (maxHeight.value - 2 * LOCK_PAD)
-        val keySize = LockLayout.keySizeDp(areaWidth, areaHeight).dp
-        val headerScale = LockLayout.headerScale(keySize.value)
+        val keySize = if (wide) {
+            LockLayout.keySizeDp(areaWidth, areaHeight, LockLayout.WIDE_KEY_DP).dp
+        } else {
+            LockLayout.keySizeDp(areaWidth, areaHeight).dp
+        }
+        // In the side-by-side layout the header has the full window height, so
+        // there is no reason to shrink it; only the stacked layout scales it.
+        val headerScale = if (wide) 1f else LockLayout.headerScale(keySize.value)
         Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
             if (wide) {
                 Row(

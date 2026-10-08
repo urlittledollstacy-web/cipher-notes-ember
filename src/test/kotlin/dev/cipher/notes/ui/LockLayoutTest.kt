@@ -57,6 +57,23 @@ class LockLayoutTest {
     }
 
     @Test
+    fun `the wide layout holds keys at the phone-sized cap`() {
+        // Side-by-side has the full window height, so the derived size would be
+        // huge; the design cap keeps it at a phone-sized key.
+        val key = LockLayout.keySizeDp(600f, 900f, LockLayout.WIDE_KEY_DP)
+        assertEquals(LockLayout.WIDE_KEY_DP, key, 0.01f)
+        assertEquals(52f, LockLayout.WIDE_KEY_DP, 0.01f)
+    }
+
+    @Test
+    fun `the wide cap still yields a fitting keypad`() {
+        for (width in listOf(480f, 600f, 900f, 1280f)) {
+            val key = LockLayout.keySizeDp(width / 2f, 700f, LockLayout.WIDE_KEY_DP)
+            assertTrue(LockLayout.keypadWidthDp(key) <= width / 2f + 0.01f)
+        }
+    }
+
+    @Test
     fun `arrangement follows aspect ratio, not absolute size`() {
         assertTrue(LockLayout.isWide(915f, 412f))
         assertTrue(LockLayout.isWide(1280f, 800f))
