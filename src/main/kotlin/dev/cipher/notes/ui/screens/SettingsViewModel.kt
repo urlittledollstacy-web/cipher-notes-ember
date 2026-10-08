@@ -19,6 +19,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import dev.cipher.notes.data.Note
 import dev.cipher.notes.data.NoteRepository
 import dev.cipher.notes.data.NoteType
+import dev.cipher.notes.crypto.PinHasher
 import dev.cipher.notes.ui.theme.ThemeMode
 import dev.cipher.notes.widget.NotesWidget
 import kotlinx.coroutines.Dispatchers
@@ -212,10 +213,27 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    val appPin: Flow<String?> = dataStore.data
-        .map { preferences ->
-            preferences[APP_PIN_KEY]
+    /**
+     * Whether an app-lock PIN is set. The raw PIN is never exposed: it is only
+     * ever read inside [verifyAppPin] and [setAppPin].
+     */
+    val isAppPinSet: Flow<Boolean> = dataStore.data
+        .map { it[APP_PIN_KEY] != null }
+
+    /** Verifies a PIN against the stored hash, migrating a plaintext PIN on first use. */
+    suspend fun verifyAppPin(pin: String): Boolean = withContext(Dispatchers.Default) {
+        val stored = dataStore.data.first()[APP_PIN_KEY] ?: return@withContext false
+        if (PinHasher.verify(pin, stored)) {
+            true
+        } else if (PinHasher.isLegacyPlaintext(stored) && stored == pin) {
+            // Existing install: the PIN is stored in the clear. Hash it now so
+            // the same PIN keeps working and the plaintext copy goes away.
+            dataStore.edit { it[APP_PIN_KEY] = PinHasher.hash(pin) }
+            true
+        } else {
+            false
         }
+    }
 
     fun setAppPin(pin: String?) {
         viewModelScope.launch {
@@ -223,7 +241,8 @@ class SettingsViewModel @Inject constructor(
                 if (pin == null) {
                     preferences.remove(APP_PIN_KEY)
                 } else {
-                    preferences[APP_PIN_KEY] = pin
+                    val hashed = withContext(Dispatchers.Default) { PinHasher.hash(pin) }
+                    preferences[APP_PIN_KEY] = hashed
                 }
             }
         }

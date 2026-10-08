@@ -60,7 +60,7 @@ fun SettingsScreen(
     val isBiometricEnabled by viewModel.isBiometricEnabled.collectAsState(initial = true)
     val isWidgetContentVisible by viewModel.isWidgetContentVisible.collectAsState(initial = false)
     val sealNewNotesByDefault by viewModel.sealNewNotesByDefault.collectAsState(initial = true)
-    val currentPin by viewModel.appPin.collectAsState(initial = null)
+    val isAppPinSet by viewModel.isAppPinSet.collectAsState(initial = false)
 
     val allNotes by viewModel.allNotes.collectAsState(initial = emptyList())
     val pinnedNoteIds by viewModel.pinnedNoteIds.collectAsState(initial = emptySet())
@@ -761,7 +761,7 @@ fun SettingsScreen(
                             Switch(
                                 checked = isAppLockEnabled,
                                 onCheckedChange = { enabled ->
-                                    if (enabled && currentPin == null) {
+                                    if (enabled && !isAppPinSet) {
                                         showPinDialog = true
                                     } else {
                                         viewModel.setAppLock(enabled)
@@ -806,7 +806,7 @@ fun SettingsScreen(
                             headlineContent = { Text("Change App PIN", color = onSurface) },
                             supportingContent = {
                                 Text(
-                                    if (currentPin == null) "PIN not set" else "Update your 4-digit security code",
+                                    if (isAppPinSet) "Update your 4-digit security code" else "PIN not set",
                                     color = onSurfaceVariant
                                 )
                             },
@@ -814,7 +814,7 @@ fun SettingsScreen(
                             colors = ListItemDefaults.colors(containerColor = Color.Transparent)
                         )
 
-                        if (currentPin != null) {
+                        if (isAppPinSet) {
                             ListItem(
                                 modifier = Modifier.clickable { showRemovePinConfirm = true },
                                 headlineContent = { Text("Remove App PIN", color = onSurface) },

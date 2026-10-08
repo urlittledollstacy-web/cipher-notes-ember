@@ -20,6 +20,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.fragment.app.FragmentActivity
@@ -30,6 +31,12 @@ import dev.cipher.notes.ui.CipherMainApp
 import dev.cipher.notes.ui.screens.SettingsViewModel
 import dev.cipher.notes.ui.theme.CipherTheme
 import dev.cipher.notes.ui.theme.ThemeMode
+import kotlinx.coroutines.launch
+
+// The app lock stands in front of every note, so it throttles like the note
+// unlock rather than allowing unlimited 4-digit guesses.
+private const val MAX_PIN_ATTEMPTS = 5
+private const val BASE_PIN_LOCKOUT_MS = 5_000L
 
 @AndroidEntryPoint
 class MainActivity : FragmentActivity() {
@@ -49,7 +56,6 @@ class MainActivity : FragmentActivity() {
             val themeMode by settingsViewModel.themeMode.collectAsState(initial = ThemeMode.DEFAULT)
             val isAppLockEnabled by settingsViewModel.isAppLockEnabled.collectAsState(initial = false)
             val isBiometricEnabledState by settingsViewModel.isBiometricEnabled.collectAsState(initial = null)
-            val appPin by settingsViewModel.appPin.collectAsState(initial = null)
 
             var isAuthenticated by remember { mutableStateOf(false) }
 
@@ -68,7 +74,7 @@ class MainActivity : FragmentActivity() {
                                 BiometricPromptManager.canAuthenticate(this@MainActivity)
 
                         LockScreen(
-                            correctPin = appPin,
+                            verifyPin = settingsViewModel::verifyAppPin,
                             biometricEnabled = biometricEnabled,
                             onUnlockRequest = {
                                 if (biometricEnabled) {
@@ -142,13 +148,27 @@ class MainActivity : FragmentActivity() {
 
 @Composable
 fun LockScreen(
-    correctPin: String?,
+    verifyPin: suspend (String) -> Boolean,
     biometricEnabled: Boolean,
     onUnlockRequest: () -> Unit,
     onAuthenticated: () -> Unit
 ) {
     var enteredPin by remember { mutableStateOf("") }
+    var failedAttempts by remember { mutableStateOf(0) }
+    var lockoutUntil by remember { mutableStateOf(0L) }
+    var now by remember { mutableStateOf(System.currentTimeMillis()) }
+    val scope = rememberCoroutineScope()
     val primaryColor = MaterialTheme.colorScheme.primary
+
+    val lockedForMs = (lockoutUntil - now).coerceAtLeast(0L)
+
+    LaunchedEffect(lockoutUntil) {
+        while (System.currentTimeMillis() < lockoutUntil) {
+            now = System.currentTimeMillis()
+            kotlinx.coroutines.delay(1000)
+        }
+        now = System.currentTimeMillis()
+    }
 
     LaunchedEffect(biometricEnabled) {
         if (biometricEnabled) {
@@ -199,6 +219,15 @@ fun LockScreen(
             modifier = Modifier.width(280.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            if (lockedForMs > 0L) {
+                Text(
+                    text = "Too many attempts. Try again in ${lockedForMs / 1000 + 1}s",
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.fillMaxWidth(),
+                    textAlign = TextAlign.Center
+                )
+            }
             val rows = listOf(
                 listOf("1", "2", "3"),
                 listOf("4", "5", "6"),
@@ -219,13 +248,25 @@ fun LockScreen(
                                 onClick = {
                                     if (digit == "C") {
                                         if (enteredPin.isNotEmpty()) enteredPin = enteredPin.dropLast(1)
-                                    } else if (enteredPin.length < 4) {
+                                    } else if (enteredPin.length < 4 && lockedForMs <= 0L) {
                                         enteredPin += digit
                                         if (enteredPin.length == 4) {
-                                            if (correctPin == null || enteredPin == correctPin) {
-                                                onAuthenticated()
-                                            } else {
-                                                enteredPin = ""
+                                            val attempt = enteredPin
+                                            enteredPin = ""
+                                            scope.launch {
+                                                if (verifyPin(attempt)) {
+                                                    failedAttempts = 0
+                                                    onAuthenticated()
+                                                } else {
+                                                    failedAttempts++
+                                                    if (failedAttempts >= MAX_PIN_ATTEMPTS) {
+                                                        // A 4-digit PIN is only 10k
+                                                        // combinations; this is what
+                                                        // stops them being tried in bulk.
+                                                        lockoutUntil = System.currentTimeMillis() +
+                                                            BASE_PIN_LOCKOUT_MS * (1L shl (failedAttempts - MAX_PIN_ATTEMPTS).coerceAtMost(6))
+                                                    }
+                                                }
                                             }
                                         }
                                     }
