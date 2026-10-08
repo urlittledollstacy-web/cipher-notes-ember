@@ -228,16 +228,26 @@ fun LockScreen(
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
     ) {
-        val shortScreen = maxHeight < LOCK_STACKED_MIN_HEIGHT
+        val shortScreen = maxHeight < LOCK_LANDSCAPE_MIN_HEIGHT
         val availableHeight = maxHeight
+        // A split-screen window is shorter than any phone. Shrink the keypad so
+        // it still fits whole: scrolling a keypad is unusable, because you
+        // cannot see the digits you are trying to reach.
+        val compact = maxHeight < LOCK_COMPACT_MIN_HEIGHT
+        val buttonSize = when {
+            compact -> 44.dp
+            shortScreen -> 52.dp
+            else -> 64.dp
+        }
+        val gutter = if (compact) 12.dp else 24.dp
         Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
             if (shortScreen) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .heightIn(min = availableHeight)
-                        .padding(24.dp),
-                    horizontalArrangement = Arrangement.spacedBy(32.dp),
+                        .padding(gutter),
+                    horizontalArrangement = Arrangement.spacedBy(if (compact) 12.dp else 32.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Keypad(
@@ -245,6 +255,7 @@ fun LockScreen(
                         lockedForMs = lockedForMs,
                         onDigit = onDigit,
                         primaryColor = primaryColor,
+                        buttonSize = buttonSize,
                         modifier = Modifier.weight(1f)
                     )
                     Column(
@@ -255,7 +266,8 @@ fun LockScreen(
                             enteredPin = enteredPin,
                             biometricEnabled = biometricEnabled,
                             primaryColor = primaryColor,
-                            onUnlockRequest = onUnlockRequest
+                            onUnlockRequest = onUnlockRequest,
+                            compact = compact
                         )
                     }
                 }
@@ -264,7 +276,7 @@ fun LockScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .heightIn(min = availableHeight)
-                        .padding(24.dp),
+                        .padding(gutter),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.SpaceEvenly
                 ) {
@@ -278,7 +290,8 @@ fun LockScreen(
                         rows = rows,
                         lockedForMs = lockedForMs,
                         onDigit = onDigit,
-                        primaryColor = primaryColor
+                        primaryColor = primaryColor,
+                        buttonSize = buttonSize
                     )
                     BiometricUnlockButton(
                         biometricEnabled = biometricEnabled,
@@ -291,7 +304,8 @@ fun LockScreen(
     }
 }
 
-private val LOCK_STACKED_MIN_HEIGHT = 420.dp
+private val LOCK_LANDSCAPE_MIN_HEIGHT = 420.dp
+private val LOCK_COMPACT_MIN_HEIGHT = 300.dp
 private const val LOCK_KEYPAD_WIDTH = 260
 
 /** Fingerprint button, title and the four PIN dots. */
@@ -301,8 +315,11 @@ private fun LockHeader(
     biometricEnabled: Boolean,
     primaryColor: androidx.compose.ui.graphics.Color,
     onUnlockRequest: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    compact: Boolean = false
 ) {
+    val iconSize = if (compact) 40.dp else 64.dp
+    val dotSize = if (compact) 12.dp else 16.dp
     Column(
         modifier = modifier,
         horizontalAlignment = Alignment.CenterHorizontally
@@ -311,22 +328,22 @@ private fun LockHeader(
             imageVector = Icons.Rounded.Fingerprint,
             contentDescription = "Biometric Lock",
             modifier = Modifier
-                .size(64.dp)
+                .size(iconSize)
                 .clickable(enabled = biometricEnabled) { onUnlockRequest() },
             tint = if (biometricEnabled) primaryColor else primaryColor.copy(alpha = 0.2f)
         )
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(if (compact) 8.dp else 16.dp))
         Text(
             text = "CipherNotes Locked",
-            style = MaterialTheme.typography.headlineSmall,
+            style = if (compact) MaterialTheme.typography.titleMedium else MaterialTheme.typography.headlineSmall,
             fontWeight = FontWeight.Bold
         )
-        Spacer(modifier = Modifier.height(32.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+        Spacer(modifier = Modifier.height(if (compact) 16.dp else 32.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(if (compact) 12.dp else 16.dp)) {
             repeat(4) { index ->
                 val isFilled = index < enteredPin.length
                 Surface(
-                    modifier = Modifier.size(16.dp),
+                    modifier = Modifier.size(dotSize),
                     shape = CircleShape,
                     color = if (isFilled) primaryColor else primaryColor.copy(alpha = 0.2f),
                     border = if (!isFilled) BorderStroke(1.dp, primaryColor) else null
@@ -358,11 +375,12 @@ private fun Keypad(
     lockedForMs: Long,
     onDigit: (String) -> Unit,
     primaryColor: androidx.compose.ui.graphics.Color,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    buttonSize: androidx.compose.ui.unit.Dp = 64.dp
 ) {
     Column(
         modifier = modifier.widthIn(max = LOCK_KEYPAD_WIDTH.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        verticalArrangement = Arrangement.spacedBy(if (buttonSize < 64.dp) 10.dp else 16.dp)
     ) {
         if (lockedForMs > 0L) {
             Text(
@@ -380,11 +398,11 @@ private fun Keypad(
             ) {
                 row.forEach { digit ->
                     if (digit.isEmpty()) {
-                        Spacer(modifier = Modifier.size(64.dp))
+                        Spacer(modifier = Modifier.size(buttonSize))
                     } else {
                         FilledTonalButton(
                             onClick = { onDigit(digit) },
-                            modifier = Modifier.size(64.dp),
+                            modifier = Modifier.size(buttonSize),
                             shape = CircleShape,
                             contentPadding = PaddingValues(0.dp)
                         ) {
