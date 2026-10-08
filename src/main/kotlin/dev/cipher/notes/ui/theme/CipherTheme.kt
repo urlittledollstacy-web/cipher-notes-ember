@@ -3,6 +3,8 @@ package dev.cipher.notes.ui.theme
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SwitchColors
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Typography
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.darkColorScheme
@@ -223,13 +225,12 @@ private val EmberTypography = Typography(
 )
 
 /**
- * A stored theme choice. [EMBER] is always dark. [LIGHT] picks the warm light
- * palette on a light system and falls back to [EMBER] on a dark one. [SOLARIZED]
- * and [PASTEL_PINK] are light-only and ignore the system setting.
+ * A stored theme choice. [EMBER] is always dark. [LIGHT], [SOLARIZED] and
+ * [PASTEL_PINK] are light-only and ignore the system setting.
  */
 enum class ThemeMode(val key: String, val label: String, val summary: String) {
     EMBER("ember", "Ember Archive", "Warm dark paper, always dark"),
-    LIGHT("light", "Light", "Warm light, follows system dark mode"),
+    LIGHT("light", "Light", "Warm light only"),
     SOLARIZED("solarized", "Solarized", "Soft contrast, classic palette"),
     PASTEL_PINK("pastel_pink", "Pastel Pink", "Blush background, rose accent");
 
@@ -248,6 +249,26 @@ fun themeSwatches(mode: ThemeMode): List<Color> = when (mode) {
     ThemeMode.SOLARIZED -> listOf(Color(0xFFFDF6E3), Color(0xFF268BD2), Color(0xFFB58900))
     ThemeMode.PASTEL_PINK -> listOf(Color(0xFFFFF1F5), Color(0xFFB03060), Color(0xFFB5628A))
 }
+
+/**
+ * Switch colours shared by every settings toggle.
+ *
+ * Material's off defaults are `outline` for the thumb on `surfaceVariant` for
+ * the track. In Ember those are both nearly the same dark brown (#33291F on
+ * #2A2219), so the off thumb disappeared into its track and the switch read as
+ * on. A mid-tone [androidx.compose.material3.ColorScheme.onSurfaceVariant] thumb
+ * stays visible against the track in every theme.
+ */
+@Composable
+fun cipherSwitchColors(
+    checkedColor: Color = MaterialTheme.colorScheme.primary
+): SwitchColors = SwitchDefaults.colors(
+    checkedThumbColor = checkedColor,
+    checkedTrackColor = checkedColor.copy(alpha = 0.3f),
+    uncheckedThumbColor = MaterialTheme.colorScheme.onSurfaceVariant,
+    uncheckedTrackColor = MaterialTheme.colorScheme.surfaceVariant,
+    uncheckedBorderColor = MaterialTheme.colorScheme.outlineVariant
+)
 
 /**
  * The one place that maps a theme choice onto a [ColorScheme]. Kept free of
@@ -271,7 +292,7 @@ fun cipherColorScheme(
     }
     return when (themeMode) {
         ThemeMode.EMBER -> DarkScheme
-        ThemeMode.LIGHT -> if (darkTheme) DarkScheme else LightScheme
+        ThemeMode.LIGHT -> LightScheme
         ThemeMode.SOLARIZED -> SolarizedScheme
         ThemeMode.PASTEL_PINK -> PastelPinkScheme
     }

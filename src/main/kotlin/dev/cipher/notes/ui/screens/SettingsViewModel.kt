@@ -96,7 +96,10 @@ class SettingsViewModel @Inject constructor(
 
     val uiState: Flow<SettingsUiState> = dataStore.data.map { preferences ->
         SettingsUiState(
-            dynamicColors = preferences[DYNAMIC_COLORS_KEY] ?: true,
+            // Off unless asked for. Dynamic colours repaint the whole app from
+            // the wallpaper, which overrides the chosen theme, so they are opt-in
+            // rather than the first thing a new install sees.
+            dynamicColors = preferences[DYNAMIC_COLORS_KEY] ?: false,
             themeMode = resolveThemeMode(preferences),
             appLockEnabled = preferences[APP_LOCK_KEY] ?: false,
             biometricEnabled = preferences[BIOMETRIC_ENABLED_KEY] ?: true,
@@ -134,12 +137,12 @@ class SettingsViewModel @Inject constructor(
 
     val useDynamicColors: Flow<Boolean> = dataStore.data
         .map { preferences ->
-            preferences[DYNAMIC_COLORS_KEY] ?: true
+            preferences[DYNAMIC_COLORS_KEY] ?: false
         }
 
     // Existing installs only ever had the dynamic-colors boolean. Read the new
-    // key first, then default: dynamic off meant the user wanted Ember, dynamic
-    // on (the default they never touched) meant Light.
+    // key first, then fall back: dynamic off meant the user wanted Ember, dynamic
+    // on meant Light. A fresh install has neither key and gets the default theme.
     private fun resolveThemeMode(preferences: Preferences): ThemeMode {
         val stored = preferences[THEME_MODE_KEY]
         return if (stored != null) {

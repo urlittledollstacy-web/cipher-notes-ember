@@ -8,8 +8,9 @@ import dev.cipher.notes.ui.theme.ThemeMode
  *
  * Glance cannot reach [androidx.compose.material3.MaterialTheme], and it cannot
  * read the wallpaper for dynamic colors, so the widget carries its own copy of
- * each palette. Day/night values let the launcher resolve "follows the system"
- * themes for us via [androidx.glance.color.ColorProvider].
+ * each palette. No theme follows the system any more, so the day and night
+ * values are equal; the pairs are kept because [androidx.glance.color.ColorProvider]
+ * expects them.
  */
 data class WidgetTheme(
     val backgroundDay: Color,
@@ -56,13 +57,7 @@ data class WidgetTheme(
 
         fun of(mode: ThemeMode): WidgetTheme = when (mode) {
             ThemeMode.EMBER -> of(emberBg, emberSurface, emberTitle, emberAccent, emberMuted)
-            ThemeMode.LIGHT -> WidgetTheme(
-                backgroundDay = lightBg, backgroundNight = emberBg,
-                surfaceDay = lightSurface, surfaceNight = emberSurface,
-                titleDay = lightTitle, titleNight = emberTitle,
-                accentDay = lightAccent, accentNight = emberAccent,
-                mutedDay = lightMuted, mutedNight = emberMuted
-            )
+            ThemeMode.LIGHT -> of(lightBg, lightSurface, lightTitle, lightAccent, lightMuted)
             ThemeMode.SOLARIZED -> of(solarizedBg, solarizedSurface, solarizedTitle, solarizedAccent, solarizedMuted)
             ThemeMode.PASTEL_PINK -> of(pinkBg, pinkSurface, pinkTitle, pinkAccent, pinkMuted)
         }
