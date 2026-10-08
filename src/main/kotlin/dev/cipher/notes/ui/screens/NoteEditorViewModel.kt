@@ -17,12 +17,19 @@ import dev.cipher.notes.data.NoteType
 import dev.cipher.notes.data.TodoItem
 import dev.cipher.notes.utils.JsonUtils
 import dev.cipher.notes.widget.NotesWidget
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import javax.inject.Inject
@@ -51,6 +58,13 @@ class NoteEditorViewModel @Inject constructor(
     private companion object {
         const val MAX_UNLOCK_ATTEMPTS = 5
         const val BASE_LOCKOUT_MS = 2_000L
+
+        /**
+         * Quiet period before a typed change is written. Long enough that a
+         * burst of keystrokes collapses into one write, short enough that the
+         * note is on disk almost immediately after typing stops.
+         */
+        const val SAVE_DEBOUNCE_MS = 400L
     }
 
     private val noteId: String? = savedStateHandle["noteId"]
@@ -59,6 +73,23 @@ class NoteEditorViewModel @Inject constructor(
     private var currentUserPassword: String? = null
     private var failedAttempts = 0
     private var lockoutUntil = 0L
+
+    /**
+     * Serializes every write. Saves are launched concurrently (one per
+     * keystroke), so without this an earlier, shorter snapshot can land after a
+     * later one and win, leaving the note on an old title or content.
+     */
+    private val writeMutex = Mutex()
+    private var debounceJob: Job? = null
+    private var deleted = false
+
+    /**
+     * A scope that outlives [viewModelScope] so the final flush on exit is not
+     * cancelled when the screen closes. Writes here are also non-cancellable:
+     * leaving the editor is a normal action, but a cancelled write is how a
+     * seal or a last keystroke silently vanished.
+     */
+    private val cleanupScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val _uiState = MutableStateFlow(EditorUiState())
     val uiState: StateFlow<EditorUiState> = _uiState.asStateFlow()
 
@@ -112,12 +143,12 @@ class NoteEditorViewModel @Inject constructor(
 
     fun setTitle(t: String) {
         _uiState.update { it.copy(title = t) }
-        save()
+        scheduleSave()
     }
 
     fun setContent(newValue: TextFieldValue) {
         _uiState.update { it.copy(content = newValue) }
-        save()
+        scheduleSave()
     }
 
     fun addTodoItem(text: String = "") {
@@ -145,107 +176,156 @@ class NoteEditorViewModel @Inject constructor(
     }
 
     fun save() {
-        viewModelScope.launch {
-            val state = _uiState.value
-            if (state.isLocked) return@launch
+        viewModelScope.launch { writeLatest() }
+    }
 
-
-            val note = state.note ?: Note(
-                id = noteId ?: java.util.UUID.randomUUID().toString(),
-                title = state.title.trim(),
-                content = state.content.text,
-                createdAt = System.currentTimeMillis(),
-                modifiedAt = System.currentTimeMillis()
-            )
-
-            try {
-                val updatedCiphertext = if (state.encrypted && currentUserPassword != null) {
-                    val payload = JSONObject().apply {
-                        put("title", state.title)
-                        if (note.type == NoteType.TODO) {
-                            put("items", JsonUtils.todoItemsToJson(state.items))
-                        } else {
-                            put("content", state.content.text)
-                        }
-                    }
-
-                    withContext(Dispatchers.Default) {
-                        crypto.encrypt(payload.toString(), currentUserPassword!!)
-                    }
-                } else {
-                    note.ciphertext
-                }
-
-                val updated = note.copy(
-                    title = state.title.trim(),
-                    content = if (!state.encrypted && note.type == NoteType.TEXT) state.content.text else "",
-                    itemsJson = if (!state.encrypted && note.type == NoteType.TODO) JsonUtils.todoItemsToJson(state.items) else "[]",
-                    ciphertext = updatedCiphertext,
-                    modifiedAt = System.currentTimeMillis()
-                )
-
-
-                repo.saveNote(updated)
-                _uiState.update { it.copy(note = updated) }
-
-
-                kotlinx.coroutines.delay(100)
-
-
-
-            } catch (e: Exception) {
-                _uiState.update { it.copy(error = "Save failed: ${e.message}") }
-            }
+    /**
+     * Saves typed changes after a short quiet period.
+     *
+     * Typing fires this once per keystroke. Restarting the timer each time means
+     * one write lands once typing stops, instead of one per character racing the
+     * others to the database.
+     */
+    private fun scheduleSave() {
+        debounceJob?.cancel()
+        debounceJob = viewModelScope.launch {
+            delay(SAVE_DEBOUNCE_MS)
+            writeLatest()
         }
     }
 
-    fun performEncrypt(password: String, enableBiometric: Boolean = false) {
-        viewModelScope.launch {
-            val state = _uiState.value
-            val note = state.note ?: return@launch
-            try {
+    /**
+     * Writes the current state, in order.
+     *
+     * Every write takes [writeMutex], so concurrent saves cannot land out of
+     * order and leave an older snapshot as the final word.
+     */
+    private suspend fun writeLatest() {
+        writeMutex.withLock { writeCurrentState() }
+    }
+
+    /**
+     * Flushes any pending typed change on exit, without letting the closing
+     * screen cancel it. Called from [onCleared]; the work runs on
+     * [cleanupScope] because [viewModelScope] is already cancelled by then.
+     */
+    fun flushPendingSaves() {
+        debounceJob?.cancel()
+        cleanupScope.launch {
+            withContext(NonCancellable) { writeLatest() }
+        }
+    }
+
+    override fun onCleared() {
+        flushPendingSaves()
+        super.onCleared()
+    }
+
+    private suspend fun writeCurrentState() {
+        val state = _uiState.value
+        if (state.isLocked || deleted) return
+
+        val note = state.note ?: Note(
+            id = noteId ?: java.util.UUID.randomUUID().toString(),
+            title = state.title.trim(),
+            content = state.content.text,
+            createdAt = System.currentTimeMillis(),
+            modifiedAt = System.currentTimeMillis()
+        )
+
+        try {
+            val updatedCiphertext = if (state.encrypted && currentUserPassword != null) {
                 val payload = JSONObject().apply {
                     put("title", state.title)
-                    if (note.type == NoteType.TEXT) {
-                        put("content", state.content.text)
-                    } else {
+                    if (note.type == NoteType.TODO) {
                         put("items", JsonUtils.todoItemsToJson(state.items))
+                    } else {
+                        put("content", state.content.text)
                     }
                 }
 
-                val cipher = withContext(Dispatchers.Default) {
-                    crypto.encrypt(payload.toString(), password)
+                withContext(Dispatchers.Default) {
+                    crypto.encrypt(payload.toString(), currentUserPassword!!)
                 }
+            } else {
+                note.ciphertext
+            }
 
-                currentUserPassword = password
+            val updated = note.copy(
+                title = state.title.trim(),
+                content = if (!state.encrypted && note.type == NoteType.TEXT) state.content.text else "",
+                itemsJson = if (!state.encrypted && note.type == NoteType.TODO) JsonUtils.todoItemsToJson(state.items) else "[]",
+                ciphertext = updatedCiphertext,
+                modifiedAt = System.currentTimeMillis()
+            )
 
-                if (enableBiometric) {
-                    crypto.savePasswordForBiometric(note.id, password)
-                } else {
-                    crypto.removeBiometricPassword(note.id)
+            repo.saveNote(updated)
+            _uiState.update { it.copy(note = updated) }
+        } catch (e: Exception) {
+            _uiState.update { it.copy(error = "Save failed: ${e.message}") }
+        }
+    }
+
+    /**
+     * Publishes a sealed note.
+     *
+     * The encryption and the write run on [cleanupScope] and are
+     * non-cancellable, because leaving the editor used to cancel them and leave
+     * the note silently unsealed while the user believed it was locked.
+     */
+    fun performEncrypt(password: String, enableBiometric: Boolean = false) {
+        cleanupScope.launch {
+            withContext(NonCancellable) {
+                val state = _uiState.value
+                val note = state.note ?: return@withContext
+
+                // Serialize with ordinary saves and cancel any pending one, so a
+                // later autosave cannot overwrite this sealed snapshot with the
+                // still-unencrypted state.
+                debounceJob?.cancel()
+                writeMutex.withLock {
+                    try {
+                        val payload = JSONObject().apply {
+                            put("title", state.title)
+                            if (note.type == NoteType.TEXT) {
+                                put("content", state.content.text)
+                            } else {
+                                put("items", JsonUtils.todoItemsToJson(state.items))
+                            }
+                        }
+
+                        val cipher = withContext(Dispatchers.Default) {
+                            crypto.encrypt(payload.toString(), password)
+                        }
+
+                        currentUserPassword = password
+
+                        if (enableBiometric) {
+                            crypto.savePasswordForBiometric(note.id, password)
+                        } else {
+                            crypto.removeBiometricPassword(note.id)
+                        }
+
+                        val encryptedNote = note.copy(
+                            ciphertext = cipher,
+                            encrypted = true,
+                            content = "",
+                            itemsJson = "[]",
+                            modifiedAt = System.currentTimeMillis()
+                        )
+                        repo.saveNote(encryptedNote)
+
+                        _uiState.update { it.copy(
+                            note = encryptedNote,
+                            encrypted = true,
+                            isLocked = true,
+                            hasBiometric = enableBiometric,
+                            error = null
+                        ) }
+                    } catch (e: Exception) {
+                        _uiState.update { it.copy(error = "Encryption failed") }
+                    }
                 }
-
-                val encryptedNote = note.copy(
-                    ciphertext = cipher,
-                    encrypted = true,
-                    content = "",
-                    itemsJson = "[]",
-                    modifiedAt = System.currentTimeMillis()
-                )
-                repo.saveNote(encryptedNote)
-
-                _uiState.update { it.copy(
-                    note = encryptedNote,
-                    encrypted = true,
-                    isLocked = true,
-                    hasBiometric = enableBiometric,
-                    error = null
-                ) }
-
-                kotlinx.coroutines.delay(100)
-
-            } catch (e: Exception) {
-                _uiState.update { it.copy(error = "Encryption failed") }
             }
         }
     }
@@ -320,34 +400,39 @@ class NoteEditorViewModel @Inject constructor(
      * state and this is a save with the seal dropped rather than a decrypt.
      */
     fun unseal() {
-        viewModelScope.launch {
-            val state = _uiState.value
-            val note = state.note ?: return@launch
-            if (state.isLocked) return@launch
-            try {
-                val unsealed = note.copy(
-                    title = state.title.trim(),
-                    encrypted = false,
-                    ciphertext = null,
-                    content = if (note.type == NoteType.TEXT) state.content.text else "",
-                    itemsJson = if (note.type == NoteType.TODO) JsonUtils.todoItemsToJson(state.items) else "[]",
-                    modifiedAt = System.currentTimeMillis()
-                )
-                repo.saveNote(unsealed)
-                // Nothing should keep a biometric unlock pointing at a note
-                // that is now plaintext.
-                crypto.removeBiometricPassword(note.id)
-                // Drop the cached password so the next save cannot re-seal.
-                currentUserPassword = null
-                _uiState.update { it.copy(
-                    note = unsealed,
-                    encrypted = false,
-                    isLocked = false,
-                    hasBiometric = false,
-                    error = null
-                ) }
-            } catch (e: Exception) {
-                _uiState.update { it.copy(error = "Unseal failed") }
+        cleanupScope.launch {
+            withContext(NonCancellable) {
+                val state = _uiState.value
+                val note = state.note ?: return@withContext
+                if (state.isLocked) return@withContext
+                debounceJob?.cancel()
+                writeMutex.withLock {
+                    try {
+                        val unsealed = note.copy(
+                            title = state.title.trim(),
+                            encrypted = false,
+                            ciphertext = null,
+                            content = if (note.type == NoteType.TEXT) state.content.text else "",
+                            itemsJson = if (note.type == NoteType.TODO) JsonUtils.todoItemsToJson(state.items) else "[]",
+                            modifiedAt = System.currentTimeMillis()
+                        )
+                        repo.saveNote(unsealed)
+                        // Nothing should keep a biometric unlock pointing at a note
+                        // that is now plaintext.
+                        crypto.removeBiometricPassword(note.id)
+                        // Drop the cached password so the next save cannot re-seal.
+                        currentUserPassword = null
+                        _uiState.update { it.copy(
+                            note = unsealed,
+                            encrypted = false,
+                            isLocked = false,
+                            hasBiometric = false,
+                            error = null
+                        ) }
+                    } catch (e: Exception) {
+                        _uiState.update { it.copy(error = "Unseal failed") }
+                    }
+                }
             }
         }
     }
@@ -378,13 +463,18 @@ class NoteEditorViewModel @Inject constructor(
     }
 
     fun delete() {
-        viewModelScope.launch {
-            val note = _uiState.value.note ?: return@launch
-            crypto.removeBiometricPassword(note.id)
-            repo.deleteNote(note.id)
-
-            kotlinx.coroutines.delay(100)
-
+        cleanupScope.launch {
+            withContext(NonCancellable) {
+                // Mark deleted before the write lock so the onCleared flush
+                // cannot re-insert the note we are about to remove.
+                deleted = true
+                debounceJob?.cancel()
+                writeMutex.withLock {
+                    val note = _uiState.value.note ?: return@withLock
+                    crypto.removeBiometricPassword(note.id)
+                    repo.deleteNote(note.id)
+                }
+            }
         }
     }
 
