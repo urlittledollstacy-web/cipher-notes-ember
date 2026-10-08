@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import dev.cipher.notes.data.NoteType
 import dev.cipher.notes.ui.components.NoteCard
+import dev.cipher.notes.ui.components.SwipeToDeleteNoteCard
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -48,6 +49,18 @@ fun ListScreen(
     val sealByDefault by settingsViewModel.sealNewNotesByDefault.collectAsState(initial = true)
     var showCreateSheet by remember { mutableStateOf(false) }
     var isSharedTextProcessed by rememberSaveable { mutableStateOf(false) }
+
+    val pendingDelete = uiState.pendingDelete
+    val snackbarHostState = remember { SnackbarHostState() }
+    LaunchedEffect(pendingDelete?.id) {
+        if (pendingDelete == null) return@LaunchedEffect
+        val result = snackbarHostState.showSnackbar(
+            message = "Note deleted",
+            actionLabel = "Undo",
+            duration = SnackbarDuration.Long
+        )
+        if (result == SnackbarResult.ActionPerformed) vm.undoDelete()
+    }
 
     fun openCreated(id: String, extraQuery: String? = null): String {
         val sealQuery = if (sealByDefault) "promptSeal=true" else null
@@ -70,6 +83,7 @@ fun ListScreen(
     val fadeSpring = spring<Float>(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium)
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = {
@@ -151,10 +165,13 @@ fun ListScreen(
                         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 140.dp)
                     ) {
                         items(uiState.notes, key = { it.id }) { note ->
-                            NoteCard(
+                            SwipeToDeleteNoteCard(
                                 note = note,
+                                canSwipe = !note.encrypted,
                                 onClick = { onNoteClick(note.id) },
+                                onSwipeDelete = { vm.requestDelete(note.id) },
                                 isPinned = uiState.pinnedIds.contains(note.id),
+                                hasBiometric = note.encrypted,
                                 onPinClick = { vm.togglePin(note.id) }
                             )
                         }
