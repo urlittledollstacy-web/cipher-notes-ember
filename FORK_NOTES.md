@@ -37,3 +37,22 @@ Requires JDK 21 and Android SDK 36.
 ./gradlew assembleDebug     # APK at build/outputs/apk/debug/
 ./gradlew testDebugUnitTest # widget privacy rules
 ```
+
+## Getting a testable APK
+
+`.github/workflows/android-ci.yml` runs on every push and pull request. It
+runs the unit tests and builds a debug APK, uploaded as the
+`CipherEmber-debug-apk` artifact (30 day retention).
+
+Grab it from the Actions tab: open the latest run, then Artifacts ->
+`CipherEmber-debug-apk`. Artifact downloads require being signed in to
+GitHub. Unzip and install:
+
+```bash
+adb install CipherEmber-debug.apk
+```
+
+The release variant is deliberately not built here: `assembleRelease`
+produces an *unsigned* APK (no signing config in `build.gradle.kts`), which
+Android will not install. Signing a release build needs a keystore, which
+is a decision for the maintainer, not CI.
