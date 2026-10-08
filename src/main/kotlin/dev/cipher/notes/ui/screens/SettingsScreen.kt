@@ -29,6 +29,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import dev.cipher.notes.crypto.BiometricPromptManager
 import dev.cipher.notes.ui.theme.ThemeMode
+import dev.cipher.notes.ui.theme.cipherSwitchColors
 import dev.cipher.notes.ui.theme.themeSwatches
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -593,10 +594,7 @@ fun SettingsScreen(
                         Switch(
                             checked = loaded.dynamicColors,
                             onCheckedChange = { viewModel.setDynamicColors(it) },
-                            colors = SwitchDefaults.colors(
-                                checkedThumbColor = primaryColor,
-                                checkedTrackColor = primaryColor.copy(alpha = 0.3f)
-                            )
+                            colors = cipherSwitchColors()
                         )
                     },
                     colors = ListItemDefaults.colors(containerColor = Color.Transparent)
@@ -712,10 +710,7 @@ fun SettingsScreen(
                             Switch(
                                 checked = loaded.widgetContentVisible,
                                 onCheckedChange = { viewModel.setWidgetContentVisible(it) },
-                                colors = SwitchDefaults.colors(
-                                    checkedThumbColor = primaryColor,
-                                    checkedTrackColor = primaryColor.copy(alpha = 0.3f)
-                                )
+                                colors = cipherSwitchColors()
                             )
                         },
                         colors = ListItemDefaults.colors(containerColor = Color.Transparent)
@@ -748,10 +743,7 @@ fun SettingsScreen(
                             Switch(
                                 checked = loaded.sealNewNotesByDefault,
                                 onCheckedChange = { viewModel.setSealNewNotesByDefault(it) },
-                                colors = SwitchDefaults.colors(
-                                    checkedThumbColor = MaterialTheme.colorScheme.secondary,
-                                    checkedTrackColor = MaterialTheme.colorScheme.secondary.copy(alpha = 0.3f)
-                                )
+                                colors = cipherSwitchColors(MaterialTheme.colorScheme.secondary)
                             )
                         },
                         colors = ListItemDefaults.colors(containerColor = Color.Transparent)
@@ -777,10 +769,7 @@ fun SettingsScreen(
                                         viewModel.setAppLock(enabled)
                                     }
                                 },
-                                colors = SwitchDefaults.colors(
-                                    checkedThumbColor = primaryColor,
-                                    checkedTrackColor = primaryColor.copy(alpha = 0.3f)
-                                )
+                                colors = cipherSwitchColors()
                             )
                         },
                         colors = ListItemDefaults.colors(containerColor = Color.Transparent)
@@ -802,10 +791,7 @@ fun SettingsScreen(
                                     checked = loaded.biometricEnabled && isHardwareBiometricAvailable,
                                     enabled = isHardwareBiometricAvailable,
                                     onCheckedChange = { viewModel.setBiometric(it) },
-                                    colors = SwitchDefaults.colors(
-                                        checkedThumbColor = primaryColor,
-                                        checkedTrackColor = primaryColor.copy(alpha = 0.3f)
-                                    )
+                                    colors = cipherSwitchColors()
                                 )
                             },
                             colors = ListItemDefaults.colors(containerColor = Color.Transparent)
