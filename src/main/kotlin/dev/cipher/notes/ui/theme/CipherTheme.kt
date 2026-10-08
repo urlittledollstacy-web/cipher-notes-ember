@@ -223,13 +223,12 @@ private val EmberTypography = Typography(
 )
 
 /**
- * A stored theme choice. [EMBER] is always dark. [LIGHT] picks the warm light
- * palette on a light system and falls back to [EMBER] on a dark one. [SOLARIZED]
- * and [PASTEL_PINK] are light-only and ignore the system setting.
+ * A stored theme choice. [EMBER] is always dark. [LIGHT], [SOLARIZED] and
+ * [PASTEL_PINK] are light-only and ignore the system setting.
  */
 enum class ThemeMode(val key: String, val label: String, val summary: String) {
     EMBER("ember", "Ember Archive", "Warm dark paper, always dark"),
-    LIGHT("light", "Light", "Warm light, follows system dark mode"),
+    LIGHT("light", "Light", "Warm light only"),
     SOLARIZED("solarized", "Solarized", "Soft contrast, classic palette"),
     PASTEL_PINK("pastel_pink", "Pastel Pink", "Blush background, rose accent");
 
@@ -271,7 +270,7 @@ fun cipherColorScheme(
     }
     return when (themeMode) {
         ThemeMode.EMBER -> DarkScheme
-        ThemeMode.LIGHT -> if (darkTheme) DarkScheme else LightScheme
+        ThemeMode.LIGHT -> LightScheme
         ThemeMode.SOLARIZED -> SolarizedScheme
         ThemeMode.PASTEL_PINK -> PastelPinkScheme
     }

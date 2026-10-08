@@ -36,9 +36,8 @@ class CipherThemeTest {
     }
 
     @Test
-    fun `light falls back to ember when the system is dark`() {
-        val scheme = resolve(ThemeMode.LIGHT, darkTheme = true)
-        assertEquals(Ink, scheme.background)
+    fun `light stays light on a dark system`() {
+        assertEquals(Color(0xFFFAF6F1), resolve(ThemeMode.LIGHT, darkTheme = true).background)
     }
 
     @Test
