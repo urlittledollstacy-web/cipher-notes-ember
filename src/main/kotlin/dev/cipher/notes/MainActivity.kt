@@ -21,6 +21,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -49,18 +50,39 @@ class MainActivity : FragmentActivity() {
 
         setContent {
             val settingsViewModel: SettingsViewModel = hiltViewModel()
-            val useDynamicColors by settingsViewModel.useDynamicColors.collectAsState(initial = true)
-            val themeMode by settingsViewModel.themeMode.collectAsState(initial = ThemeMode.DEFAULT)
-            val isAppLockEnabled by settingsViewModel.isAppLockEnabled.collectAsState(initial = false)
+            val appLockViewModel: AppLockViewModel = hiltViewModel()
+
+            val useDynamicColors by settingsViewModel.useDynamicColors.collectAsState(initial = null)
+            val themeMode by settingsViewModel.themeMode.collectAsState(initial = null)
+            val isAppLockEnabled by settingsViewModel.isAppLockEnabled.collectAsState(initial = null)
             val isBiometricEnabledState by settingsViewModel.isBiometricEnabled.collectAsState(initial = null)
 
-            // Authentication alone is remembered here, so rotation does not re-lock.
-            val appLockViewModel: AppLockViewModel = hiltViewModel()
-            val isAuthenticated = appLockViewModel.isAuthenticated
+            val dynamicColors = useDynamicColors ?: appLockViewModel.dynamicColors
+            val resolvedTheme = themeMode ?: appLockViewModel.themeMode
+            val lockEnabled = isAppLockEnabled ?: appLockViewModel.isAppLockEnabled
+
+            // Unknown on a cold start (covered by the splash) or a slow read:
+            // draw only the window background. It must never guess, and never
+            // compose the notes before the lock state is known.
+            if (dynamicColors == null || resolvedTheme == null || lockEnabled == null) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(colorResource(id = R.color.void_bg))
+                )
+                return@setContent
+            }
+
+            // Remember the resolved values so a recreated activity (rotation)
+            // paints correctly on its first frame instead of guessing.
+            SideEffect {
+                appLockViewModel.cacheTheme(dynamicColors, resolvedTheme)
+                appLockViewModel.cacheLockEnabled(lockEnabled)
+            }
 
             CipherTheme(
-                themeMode = themeMode,
-                dynamicColors = useDynamicColors
+                themeMode = resolvedTheme,
+                dynamicColors = dynamicColors
             ) {
                 ThemedSystemBars()
 
@@ -68,7 +90,7 @@ class MainActivity : FragmentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    if (isAppLockEnabled && !isAuthenticated) {
+                    if (lockEnabled && !appLockViewModel.isAuthenticated) {
                         val biometricEnabled = (isBiometricEnabledState == true) &&
                                 BiometricPromptManager.canAuthenticate(this@MainActivity)
 
