@@ -57,12 +57,37 @@ class LockLayoutTest {
     }
 
     @Test
+    fun `rendered keypad never exceeds the height it is given`() {
+        for ((label, size) in screenSizes) {
+            val (w, h) = size
+            val key = LockLayout.keySizeDp(w, h)
+            val needed = LockLayout.keypadHeightDp(key)
+            assertTrue("$label: keypad $needed exceeds height $h", needed <= h + 0.01f)
+        }
+    }
+
+    @Test
     fun `the wide layout holds keys at the phone-sized cap`() {
         // Side-by-side has the full window height, so the derived size would be
         // huge; the design cap keeps it at a phone-sized key.
         val key = LockLayout.keySizeDp(600f, 900f, LockLayout.WIDE_KEY_DP)
         assertEquals(LockLayout.WIDE_KEY_DP, key, 0.01f)
-        assertEquals(52f, LockLayout.WIDE_KEY_DP, 0.01f)
+        assertEquals(64f, LockLayout.WIDE_KEY_DP, 0.01f)
+    }
+
+    @Test
+    fun `the wide cap shrinks to fit a short landscape rather than scrolling`() {
+        for (width in listOf(480f, 600f, 915f)) {
+            for (height in listOf(260f, 320f, 412f)) {
+                val areaHeight = height - 32f // the lock layout's vertical padding
+                val key = LockLayout.keySizeDp(width / 2f, areaHeight, LockLayout.WIDE_KEY_DP)
+                val needed = LockLayout.keypadHeightDp(key)
+                assertTrue(
+                    "${width}x$height: keypad $needed exceeds $areaHeight",
+                    needed <= areaHeight + 0.01f
+                )
+            }
+        }
     }
 
     @Test
