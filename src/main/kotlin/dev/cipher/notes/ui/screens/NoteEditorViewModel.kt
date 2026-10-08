@@ -108,6 +108,12 @@ class NoteEditorViewModel @Inject constructor(
 
                 val finalContentText = incomingSharedText ?: note.content
 
+                // Seed a still-running lockout so reopening the note shows the
+                // remaining wait straight away. Without it the countdown only
+                // appeared after a failed try, which made the tail of an earlier
+                // lockout look like a fresh, shorter one.
+                val remainingLockout = lockout.remainingLockoutMs(note.id, System.currentTimeMillis())
+
                 _uiState.value = EditorUiState(
                     note = note,
                     title = note.title,
@@ -116,7 +122,8 @@ class NoteEditorViewModel @Inject constructor(
                     encrypted = note.encrypted,
                     isLocked = note.encrypted,
                     hasBiometric = crypto.hasBiometricPassword(note.id),
-                    promptSeal = promptSealOnOpen && !note.encrypted
+                    promptSeal = promptSealOnOpen && !note.encrypted,
+                    lockoutUntil = if (remainingLockout > 0L) System.currentTimeMillis() + remainingLockout else 0L
                 )
 
                 if (incomingSharedText != null) {
