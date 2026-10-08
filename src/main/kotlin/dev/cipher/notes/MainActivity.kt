@@ -473,7 +473,7 @@ private fun Keypad(
 ) {
     Column(
         modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy((buttonSize.value * 0.25f).dp)
+        verticalArrangement = Arrangement.spacedBy(LockLayout.rowGapDp(buttonSize.value).dp)
     ) {
         if (lockedForMs > 0L) {
             Text(
