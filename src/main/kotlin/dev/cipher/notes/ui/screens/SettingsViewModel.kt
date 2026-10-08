@@ -19,6 +19,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import dev.cipher.notes.data.Note
 import dev.cipher.notes.data.NoteRepository
 import dev.cipher.notes.data.NoteType
+import dev.cipher.notes.ui.theme.ThemeMode
 import dev.cipher.notes.widget.NotesWidget
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -46,7 +47,9 @@ class SettingsViewModel @Inject constructor(
 ) : ViewModel() {
 
     companion object {
-        private val DYNAMIC_COLORS_KEY = booleanPreferencesKey("use_dynamic_colors")
+        // Shared with the widget, which needs the theme but has no Hilt graph.
+        val DYNAMIC_COLORS_KEY = booleanPreferencesKey("use_dynamic_colors")
+        val THEME_MODE_KEY = stringPreferencesKey("theme_mode")
         private val APP_LOCK_KEY = booleanPreferencesKey("app_lock_enabled")
         private val APP_PIN_KEY = stringPreferencesKey("app_pin")
         private val BIOMETRIC_ENABLED_KEY = booleanPreferencesKey("biometric_enabled")
@@ -92,11 +95,54 @@ class SettingsViewModel @Inject constructor(
             preferences[DYNAMIC_COLORS_KEY] ?: true
         }
 
+    // Existing installs only ever had the dynamic-colors boolean. Read the new
+    // key first, then default: dynamic off meant the user wanted Ember, dynamic
+    // on (the default they never touched) meant Light.
+    val themeMode: Flow<ThemeMode> = dataStore.data
+        .map { preferences ->
+            val stored = preferences[THEME_MODE_KEY]
+            if (stored != null) {
+                ThemeMode.fromKey(stored)
+            } else {
+                when (preferences[DYNAMIC_COLORS_KEY]) {
+                    false -> ThemeMode.EMBER
+                    true -> ThemeMode.LIGHT
+                    null -> ThemeMode.DEFAULT
+                }
+            }
+        }
+
+    fun setThemeMode(mode: ThemeMode) {
+        viewModelScope.launch {
+            dataStore.edit { preferences ->
+                preferences[THEME_MODE_KEY] = mode.key
+            }
+            refreshWidgetTheme(mode)
+        }
+    }
+
     fun setDynamicColors(enabled: Boolean) {
         viewModelScope.launch {
             dataStore.edit { preferences ->
                 preferences[DYNAMIC_COLORS_KEY] = enabled
             }
+            refreshWidgetTheme(themeMode.first())
+        }
+    }
+
+    /**
+     * The widget lives in its own Glance state, so it cannot observe DataStore.
+     * Mirror the resolved theme across and re-render.
+     */
+    private suspend fun refreshWidgetTheme(mode: ThemeMode) {
+        val manager = GlanceAppWidgetManager(context)
+        manager.getGlanceIds(NotesWidget::class.java).forEach { glanceId ->
+            updateAppWidgetState(context, PreferencesGlanceStateDefinition, glanceId) { prefs ->
+                prefs.toMutablePreferences().apply {
+                    this[NotesWidget.THEME_MODE_KEY] = mode.key
+                }
+            }
+            NotesWidget().update(context, glanceId)
         }
     }
 

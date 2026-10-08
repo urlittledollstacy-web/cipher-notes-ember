@@ -27,6 +27,8 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import dev.cipher.notes.crypto.BiometricPromptManager
+import dev.cipher.notes.ui.theme.ThemeMode
+import dev.cipher.notes.ui.theme.themeSwatches
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -52,6 +54,8 @@ fun SettingsScreen(
     var importPassword by remember { mutableStateOf("") }
 
     val useDynamicColors by viewModel.useDynamicColors.collectAsState(initial = true)
+    val themeMode by viewModel.themeMode.collectAsState(initial = ThemeMode.DEFAULT)
+    var showThemeDialog by remember { mutableStateOf(false) }
     val isAppLockEnabled by viewModel.isAppLockEnabled.collectAsState(initial = false)
     val isBiometricEnabled by viewModel.isBiometricEnabled.collectAsState(initial = true)
     val isWidgetContentVisible by viewModel.isWidgetContentVisible.collectAsState(initial = false)
@@ -235,6 +239,43 @@ fun SettingsScreen(
                     importPassword = ""
                 }) {
                     Text("Cancel")
+                }
+            }
+        )
+    }
+
+    if (showThemeDialog) {
+        AlertDialog(
+            onDismissRequest = { showThemeDialog = false },
+            title = { Text("Theme", style = MaterialTheme.typography.titleLarge) },
+            text = {
+                Column {
+                    ThemeMode.entries.forEach { mode ->
+                        ListItem(
+                            modifier = Modifier.clickable {
+                                viewModel.setThemeMode(mode)
+                                showThemeDialog = false
+                            },
+                            headlineContent = { Text(mode.label, color = onSurface) },
+                            supportingContent = { Text(mode.summary, color = onSurfaceVariant) },
+                            leadingContent = { ThemeSwatch(mode, tint = primaryColor) },
+                            trailingContent = {
+                                RadioButton(selected = mode == themeMode, onClick = null)
+                            },
+                            colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+                        )
+                    }
+                    Text(
+                        text = "Dynamic Colors overrides the theme above when available.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = onSurfaceVariant,
+                        modifier = Modifier.padding(top = 8.dp)
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showThemeDialog = false }) {
+                    Text("Close", color = primaryColor)
                 }
             }
         )
@@ -552,6 +593,27 @@ fun SettingsScreen(
                 )
             }
 
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = surfaceContainer,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                ListItem(
+                    modifier = Modifier.clickable { showThemeDialog = true },
+                    headlineContent = { Text("Theme", color = onSurface) },
+                    supportingContent = { Text(themeMode.summary, color = onSurfaceVariant) },
+                    leadingContent = {
+                        ThemeSwatch(themeMode, tint = primaryColor)
+                    },
+                    trailingContent = {
+                        Text(themeMode.label, color = primaryColor, style = MaterialTheme.typography.labelLarge)
+                    },
+                    colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+                )
+            }
+
             Spacer(modifier = Modifier.height(24.dp))
 
             Text(
@@ -854,6 +916,21 @@ fun SettingsScreen(
                     color = onSurfaceVariant.copy(alpha = 0.5f)
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun ThemeSwatch(mode: ThemeMode, tint: Color) {
+    val swatches = themeSwatches(mode)
+    Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+        swatches.forEach { color ->
+            Surface(
+                modifier = Modifier.size(20.dp),
+                shape = RoundedCornerShape(6.dp),
+                color = color,
+                border = androidx.compose.foundation.BorderStroke(1.dp, tint.copy(alpha = 0.35f))
+            ) {}
         }
     }
 }

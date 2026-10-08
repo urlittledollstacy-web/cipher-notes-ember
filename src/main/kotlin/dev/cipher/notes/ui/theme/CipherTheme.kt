@@ -4,9 +4,11 @@ import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -70,6 +72,119 @@ private val DarkScheme = darkColorScheme(
     scrim = Color(0xFF000000)
 )
 
+// Ember by daylight: warm paper, burnt-ember accent, dark brass for sealed notes.
+private val LightScheme = lightColorScheme(
+    primary = Color(0xFFB84A18),
+    onPrimary = Color(0xFFFFFBF7),
+    primaryContainer = Color(0xFFF6DCCB),
+    onPrimaryContainer = Color(0xFF5A2410),
+    secondary = Color(0xFF8A6A1F),
+    onSecondary = Color(0xFFFFFBF7),
+    secondaryContainer = Color(0xFFF1E2BC),
+    onSecondaryContainer = Color(0xFF3E2F07),
+    tertiary = Color(0xFF4F6B3A),
+    onTertiary = Color(0xFFFFFBF7),
+    tertiaryContainer = Color(0xFFDDE9CE),
+    onTertiaryContainer = Color(0xFF22350F),
+    background = Color(0xFFFAF6F1),
+    onBackground = Color(0xFF241C15),
+    surface = Color(0xFFF3ECE4),
+    onSurface = Color(0xFF241C15),
+    surfaceVariant = Color(0xFFEADFD2),
+    onSurfaceVariant = Color(0xFF6B5B4C),
+    surfaceContainerLowest = Color(0xFFFFFFFF),
+    surfaceContainerLow = Color(0xFFF7F1EA),
+    surfaceContainer = Color(0xFFF3ECE4),
+    surfaceContainerHigh = Color(0xFFEEE4D9),
+    surfaceContainerHighest = Color(0xFFE7DBCB),
+    surfaceTint = Color(0xFFB84A18),
+    inverseSurface = Color(0xFF241C15),
+    inverseOnSurface = Color(0xFFFAF6F1),
+    error = Color(0xFFB3261E),
+    onError = Color(0xFFFFFFFF),
+    errorContainer = Color(0xFFF9DEDC),
+    onErrorContainer = Color(0xFF410E0B),
+    outline = Color(0xFFD6C6B6),
+    outlineVariant = Color(0xFFBCA893),
+    scrim = Color(0xFF000000)
+)
+
+// Solarized Light (Ethan Schoonover). Neutrals are the canonical base3/base2/base1/base01,
+// accents the canonical blue/green/yellow/red. A touch soft by design.
+private val SolarizedScheme = lightColorScheme(
+    primary = Color(0xFF268BD2),
+    onPrimary = Color(0xFFFDF6E3),
+    primaryContainer = Color(0xFFD5E6F4),
+    onPrimaryContainer = Color(0xFF0F3A56),
+    secondary = Color(0xFFB58900),
+    onSecondary = Color(0xFF1A1500),
+    secondaryContainer = Color(0xFFF1E2B8),
+    onSecondaryContainer = Color(0xFF4A3800),
+    tertiary = Color(0xFF859900),
+    onTertiary = Color(0xFF1A1C00),
+    tertiaryContainer = Color(0xFFE2E6C4),
+    onTertiaryContainer = Color(0xFF373D00),
+    background = Color(0xFFFDF6E3),
+    onBackground = Color(0xFF586E75),
+    surface = Color(0xFFEEE8D5),
+    onSurface = Color(0xFF586E75),
+    surfaceVariant = Color(0xFFEEE8D5),
+    onSurfaceVariant = Color(0xFF657B83),
+    surfaceContainerLowest = Color(0xFFFDF6E3),
+    surfaceContainerLow = Color(0xFFEEE8D5),
+    surfaceContainer = Color(0xFFEEE8D5),
+    surfaceContainerHigh = Color(0xFFE4DDC8),
+    surfaceContainerHighest = Color(0xFFD9D2BC),
+    surfaceTint = Color(0xFF268BD2),
+    inverseSurface = Color(0xFF586E75),
+    inverseOnSurface = Color(0xFFFDF6E3),
+    error = Color(0xFFDC322F),
+    onError = Color(0xFFFDF6E3),
+    errorContainer = Color(0xFFF5D0CE),
+    onErrorContainer = Color(0xFF4A0E0D),
+    outline = Color(0xFF93A1A1),
+    outlineVariant = Color(0xFFB9C3C3),
+    scrim = Color(0xFF000000)
+)
+
+// Pastel Pink: blush background, plum text, rose accent. Text is kept dark plum
+// rather than grey so it stays readable on the pink surface.
+private val PastelPinkScheme = lightColorScheme(
+    primary = Color(0xFFB03060),
+    onPrimary = Color(0xFFFFF7FA),
+    primaryContainer = Color(0xFFFBD3E0),
+    onPrimaryContainer = Color(0xFF5C1533),
+    secondary = Color(0xFFB5628A),
+    onSecondary = Color(0xFFFFF7FA),
+    secondaryContainer = Color(0xFFF9DCE8),
+    onSecondaryContainer = Color(0xFF4C2038),
+    tertiary = Color(0xFF6E8B6B),
+    onTertiary = Color(0xFFFFF7FA),
+    tertiaryContainer = Color(0xFFDDE8DA),
+    onTertiaryContainer = Color(0xFF2A3A28),
+    background = Color(0xFFFFF1F5),
+    onBackground = Color(0xFF3F2733),
+    surface = Color(0xFFFDE3EC),
+    onSurface = Color(0xFF3F2733),
+    surfaceVariant = Color(0xFFF9DCE8),
+    onSurfaceVariant = Color(0xFF7A5666),
+    surfaceContainerLowest = Color(0xFFFFF7FA),
+    surfaceContainerLow = Color(0xFFFDEBF1),
+    surfaceContainer = Color(0xFFFDE3EC),
+    surfaceContainerHigh = Color(0xFFF9DCE8),
+    surfaceContainerHighest = Color(0xFFF5D2E1),
+    surfaceTint = Color(0xFFB03060),
+    inverseSurface = Color(0xFF3F2733),
+    inverseOnSurface = Color(0xFFFFF1F5),
+    error = Color(0xFFB3261E),
+    onError = Color(0xFFFFFFFF),
+    errorContainer = Color(0xFFF9DEDC),
+    onErrorContainer = Color(0xFF410E0B),
+    outline = Color(0xFFE6C2D0),
+    outlineVariant = Color(0xFFD3A8BA),
+    scrim = Color(0xFF000000)
+)
+
 val Fraunces = FontFamily(
     Font(R.font.fraunces, FontWeight.Normal),
     Font(R.font.fraunces, FontWeight.Medium),
@@ -107,19 +222,77 @@ private val EmberTypography = Typography(
     labelSmall = TextStyle(fontFamily = JetBrainsMono, fontWeight = FontWeight.Normal, fontSize = 10.sp, lineHeight = 14.sp)
 )
 
+/**
+ * A stored theme choice. [EMBER] is always dark. [LIGHT] picks the warm light
+ * palette on a light system and falls back to [EMBER] on a dark one. [SOLARIZED]
+ * and [PASTEL_PINK] are light-only and ignore the system setting.
+ */
+enum class ThemeMode(val key: String, val label: String, val summary: String) {
+    EMBER("ember", "Ember Archive", "Warm dark paper, always dark"),
+    LIGHT("light", "Light", "Warm light, follows system dark mode"),
+    SOLARIZED("solarized", "Solarized", "Soft contrast, classic palette"),
+    PASTEL_PINK("pastel_pink", "Pastel Pink", "Blush background, rose accent");
+
+    companion object {
+        val DEFAULT = EMBER
+
+        fun fromKey(key: String?): ThemeMode =
+            entries.firstOrNull { it.key == key } ?: DEFAULT
+    }
+}
+
+/** Background, accent and secondary swatches, for the settings theme picker. */
+fun themeSwatches(mode: ThemeMode): List<Color> = when (mode) {
+    ThemeMode.EMBER -> listOf(Ink, Ember, Brass)
+    ThemeMode.LIGHT -> listOf(Color(0xFFFAF6F1), Color(0xFFB84A18), Color(0xFF8A6A1F))
+    ThemeMode.SOLARIZED -> listOf(Color(0xFFFDF6E3), Color(0xFF268BD2), Color(0xFFB58900))
+    ThemeMode.PASTEL_PINK -> listOf(Color(0xFFFFF1F5), Color(0xFFB03060), Color(0xFFB5628A))
+}
+
+/**
+ * The one place that maps a theme choice onto a [ColorScheme]. Kept free of
+ * Compose so the widget can resolve the same theme from DataStore.
+ *
+ * [dynamicColorsAvailable] is false on Android 11 and below, where dynamic
+ * colors cannot be read, and false for the widget, which cannot resolve
+ * wallpaper colors at all. Dynamic colors win over the [ThemeMode] selection
+ * because the Appearance screen presents that switch as the stronger choice.
+ */
+fun cipherColorScheme(
+    themeMode: ThemeMode,
+    darkTheme: Boolean,
+    dynamicColors: Boolean,
+    dynamicColorsAvailable: Boolean,
+    dynamicDarkScheme: () -> ColorScheme = { DarkScheme },
+    dynamicLightScheme: () -> ColorScheme = { LightScheme }
+): ColorScheme {
+    if (dynamicColors && dynamicColorsAvailable) {
+        return if (darkTheme) dynamicDarkScheme() else dynamicLightScheme()
+    }
+    return when (themeMode) {
+        ThemeMode.EMBER -> DarkScheme
+        ThemeMode.LIGHT -> if (darkTheme) DarkScheme else LightScheme
+        ThemeMode.SOLARIZED -> SolarizedScheme
+        ThemeMode.PASTEL_PINK -> PastelPinkScheme
+    }
+}
+
 @Composable
 fun CipherTheme(
+    themeMode: ThemeMode = ThemeMode.DEFAULT,
+    dynamicColors: Boolean = false,
     darkTheme: Boolean = isSystemInDarkTheme(),
-    dynamicColor: Boolean = false,
     content: @Composable () -> Unit
 ) {
-    val colorScheme = when {
-        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-            val context = LocalContext.current
-            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-        }
-        else -> DarkScheme
-    }
+    val context = LocalContext.current
+    val colorScheme = cipherColorScheme(
+        themeMode = themeMode,
+        darkTheme = darkTheme,
+        dynamicColors = dynamicColors,
+        dynamicColorsAvailable = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S,
+        dynamicDarkScheme = { dynamicDarkColorScheme(context) },
+        dynamicLightScheme = { dynamicLightColorScheme(context) }
+    )
 
     MaterialTheme(
         colorScheme = colorScheme,

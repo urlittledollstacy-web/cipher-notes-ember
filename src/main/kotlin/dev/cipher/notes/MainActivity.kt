@@ -3,6 +3,7 @@ package dev.cipher.notes
 import android.content.Intent
 import android.os.Bundle
 import android.view.WindowManager
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.BorderStroke
@@ -16,6 +17,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
@@ -26,6 +29,7 @@ import dev.cipher.notes.crypto.BiometricPromptManager
 import dev.cipher.notes.ui.CipherMainApp
 import dev.cipher.notes.ui.screens.SettingsViewModel
 import dev.cipher.notes.ui.theme.CipherTheme
+import dev.cipher.notes.ui.theme.ThemeMode
 
 @AndroidEntryPoint
 class MainActivity : FragmentActivity() {
@@ -42,13 +46,19 @@ class MainActivity : FragmentActivity() {
         setContent {
             val settingsViewModel: SettingsViewModel = hiltViewModel()
             val useDynamicColors by settingsViewModel.useDynamicColors.collectAsState(initial = true)
+            val themeMode by settingsViewModel.themeMode.collectAsState(initial = ThemeMode.DEFAULT)
             val isAppLockEnabled by settingsViewModel.isAppLockEnabled.collectAsState(initial = false)
             val isBiometricEnabledState by settingsViewModel.isBiometricEnabled.collectAsState(initial = null)
             val appPin by settingsViewModel.appPin.collectAsState(initial = null)
 
             var isAuthenticated by remember { mutableStateOf(false) }
 
-            CipherTheme(dynamicColor = useDynamicColors) {
+            CipherTheme(
+                themeMode = themeMode,
+                dynamicColors = useDynamicColors
+            ) {
+                ThemedSystemBars()
+
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
@@ -75,6 +85,25 @@ class MainActivity : FragmentActivity() {
                     }
                 }
             }
+        }
+    }
+
+    /**
+     * Keeps the status/navigation bar icon contrast in sync with the resolved
+     * theme. Without this a light theme inherits white-on-white system icons.
+     */
+    @Composable
+    private fun ThemedSystemBars() {
+        val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
+        val barColor = MaterialTheme.colorScheme.background
+        val barStyle = SystemBarStyle.auto(
+            android.graphics.Color.TRANSPARENT,
+            android.graphics.Color.TRANSPARENT
+        ) { isDark }
+
+        LaunchedEffect(barColor, isDark) {
+            enableEdgeToEdge(statusBarStyle = barStyle, navigationBarStyle = barStyle)
+            window.setNavigationBarColor(barColor.toArgb())
         }
     }
 
