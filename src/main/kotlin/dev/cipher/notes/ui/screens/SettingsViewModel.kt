@@ -7,6 +7,8 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.glance.appwidget.GlanceAppWidgetManager
@@ -19,6 +21,8 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import dev.cipher.notes.data.Note
 import dev.cipher.notes.data.NoteRepository
 import dev.cipher.notes.data.NoteType
+import dev.cipher.notes.crypto.PinHasher
+import dev.cipher.notes.crypto.PinThrottle
 import dev.cipher.notes.ui.theme.ThemeMode
 import dev.cipher.notes.widget.NotesWidget
 import kotlinx.coroutines.Dispatchers
@@ -52,9 +56,17 @@ class SettingsViewModel @Inject constructor(
         val THEME_MODE_KEY = stringPreferencesKey("theme_mode")
         private val APP_LOCK_KEY = booleanPreferencesKey("app_lock_enabled")
         private val APP_PIN_KEY = stringPreferencesKey("app_pin")
+        // Kept in DataStore, not in the composable: the app lock must not be
+        // reset by rotating the device or killing the app.
+        private val APP_PIN_FAILED_KEY = intPreferencesKey("app_pin_failed_attempts")
+        private val APP_PIN_LOCKOUT_KEY = longPreferencesKey("app_pin_lockout_until")
         private val BIOMETRIC_ENABLED_KEY = booleanPreferencesKey("biometric_enabled")
         private val WIDGET_CONTENT_VISIBLE_KEY = booleanPreferencesKey("widget_content_visible")
         private val SEAL_NEW_NOTES_KEY = booleanPreferencesKey("seal_new_notes_by_default")
+
+        // The app lock stands in front of every note, so it throttles like the
+        // note unlock rather than allowing unlimited 4-digit guesses.
+        // See PinThrottle for the lockout curve.
 
         val SELECTED_NOTE_IDS_KEY = stringSetPreferencesKey("selected_note_ids")
 
@@ -63,6 +75,36 @@ class SettingsViewModel @Inject constructor(
     }
 
     val allNotes: Flow<List<Note>> = repo.getAllNotes()
+
+    /**
+     * Everything the settings screen displays, resolved in one read.
+     *
+     * Collecting each key separately forced a guessed `initial` per key, and a
+     * rotated screen painted those guesses for a frame: the theme showed as
+     * Ember Archive, dynamic colours as on, the lock and PIN toggles wrong.
+     * One snapshot removes the guesses at the source.
+     */
+    data class SettingsUiState(
+        val dynamicColors: Boolean,
+        val themeMode: ThemeMode,
+        val appLockEnabled: Boolean,
+        val biometricEnabled: Boolean,
+        val widgetContentVisible: Boolean,
+        val sealNewNotesByDefault: Boolean,
+        val appPinSet: Boolean
+    )
+
+    val uiState: Flow<SettingsUiState> = dataStore.data.map { preferences ->
+        SettingsUiState(
+            dynamicColors = preferences[DYNAMIC_COLORS_KEY] ?: true,
+            themeMode = resolveThemeMode(preferences),
+            appLockEnabled = preferences[APP_LOCK_KEY] ?: false,
+            biometricEnabled = preferences[BIOMETRIC_ENABLED_KEY] ?: true,
+            widgetContentVisible = preferences[WIDGET_CONTENT_VISIBLE_KEY] ?: false,
+            sealNewNotesByDefault = preferences[SEAL_NEW_NOTES_KEY] ?: true,
+            appPinSet = preferences[APP_PIN_KEY] != null
+        )
+    }
 
     val pinnedNoteIds: Flow<Set<String>> = dataStore.data.map { preferences ->
         preferences[SELECTED_NOTE_IDS_KEY] ?: emptySet()
@@ -98,19 +140,20 @@ class SettingsViewModel @Inject constructor(
     // Existing installs only ever had the dynamic-colors boolean. Read the new
     // key first, then default: dynamic off meant the user wanted Ember, dynamic
     // on (the default they never touched) meant Light.
-    val themeMode: Flow<ThemeMode> = dataStore.data
-        .map { preferences ->
-            val stored = preferences[THEME_MODE_KEY]
-            if (stored != null) {
-                ThemeMode.fromKey(stored)
-            } else {
-                when (preferences[DYNAMIC_COLORS_KEY]) {
-                    false -> ThemeMode.EMBER
-                    true -> ThemeMode.LIGHT
-                    null -> ThemeMode.DEFAULT
-                }
+    private fun resolveThemeMode(preferences: Preferences): ThemeMode {
+        val stored = preferences[THEME_MODE_KEY]
+        return if (stored != null) {
+            ThemeMode.fromKey(stored)
+        } else {
+            when (preferences[DYNAMIC_COLORS_KEY]) {
+                false -> ThemeMode.EMBER
+                true -> ThemeMode.LIGHT
+                null -> ThemeMode.DEFAULT
             }
         }
+    }
+
+    val themeMode: Flow<ThemeMode> = dataStore.data.map { resolveThemeMode(it) }
 
     fun setThemeMode(mode: ThemeMode) {
         viewModelScope.launch {
@@ -212,19 +255,94 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    val appPin: Flow<String?> = dataStore.data
-        .map { preferences ->
-            preferences[APP_PIN_KEY]
+    /**
+     * Whether an app-lock PIN is set. The raw PIN is never exposed: it is only
+     * ever read inside [verifyAppPin] and [setAppPin].
+     */
+    val isAppPinSet: Flow<Boolean> = dataStore.data
+        .map { it[APP_PIN_KEY] != null }
+
+    /** Verification outcome, so the lock screen can show a countdown without seeing the PIN. */
+    sealed interface PinResult {
+        data object Success : PinResult
+        data object Wrong : PinResult
+        data class Locked(val remainingMs: Long) : PinResult
+    }
+
+    /**
+     * Verifies a PIN against the stored hash, migrating a plaintext PIN on first use.
+     *
+     * The failed-attempt count and lockout deadline live in DataStore, so they
+     * survive both rotation and the app being killed. Without that, the throttle
+     * was bypassable simply by rotating the device.
+     */
+    suspend fun verifyAppPin(pin: String): PinResult = withContext(Dispatchers.Default) {
+        val prefs = dataStore.data.first()
+        val stored = prefs[APP_PIN_KEY] ?: return@withContext PinResult.Wrong
+
+        val remaining = (prefs[APP_PIN_LOCKOUT_KEY] ?: 0L) - System.currentTimeMillis()
+        if (remaining > 0L) return@withContext PinResult.Locked(remaining)
+
+        val correct = PinHasher.verify(pin, stored) ||
+            (PinHasher.isLegacyPlaintext(stored) && stored == pin)
+
+        if (correct) {
+            if (PinHasher.isLegacyPlaintext(stored)) {
+                // Existing install: the PIN is stored in the clear. Hash it now so
+                // the same PIN keeps working and the plaintext copy goes away.
+                dataStore.edit { it[APP_PIN_KEY] = PinHasher.hash(pin) }
+            }
+            dataStore.edit {
+                it.remove(APP_PIN_FAILED_KEY)
+                it.remove(APP_PIN_LOCKOUT_KEY)
+            }
+            PinResult.Success
+        } else {
+            // The count has to be committed before returning, otherwise a
+            // rotation mid-check would lose the attempt.
+            var lockedUntil = 0L
+            dataStore.edit { preferences ->
+                val attempts = (preferences[APP_PIN_FAILED_KEY] ?: 0) + 1
+                preferences[APP_PIN_FAILED_KEY] = attempts
+                val backoff = PinThrottle.lockoutMs(attempts)
+                if (backoff > 0L) {
+                    lockedUntil = System.currentTimeMillis() + backoff
+                    preferences[APP_PIN_LOCKOUT_KEY] = lockedUntil
+                }
+            }
+            if (lockedUntil > 0L) {
+                PinResult.Locked((lockedUntil - System.currentTimeMillis()).coerceAtLeast(0L))
+            } else {
+                PinResult.Wrong
+            }
         }
+    }
+
+    /**
+     * Remaining lockout in milliseconds, or 0 if the lock is not throttled.
+     *
+     * The lock screen needs this on composition: the deadline is persisted, but
+     * the composable holding the countdown is rebuilt on rotation, so it has to
+     * ask storage again or the lockout appears to vanish.
+     */
+    suspend fun activeLockoutMs(): Long = withContext(Dispatchers.Default) {
+        val until = dataStore.data.first()[APP_PIN_LOCKOUT_KEY] ?: 0L
+        (until - System.currentTimeMillis()).coerceAtLeast(0L)
+    }
 
     fun setAppPin(pin: String?) {
         viewModelScope.launch {
+            val hashed = pin?.let { withContext(Dispatchers.Default) { PinHasher.hash(it) } }
             dataStore.edit { preferences ->
-                if (pin == null) {
+                if (hashed == null) {
                     preferences.remove(APP_PIN_KEY)
                 } else {
-                    preferences[APP_PIN_KEY] = pin
+                    preferences[APP_PIN_KEY] = hashed
                 }
+                // A changed or removed PIN starts from a clean slate; a lockout
+                // against the old PIN should not carry over.
+                preferences.remove(APP_PIN_FAILED_KEY)
+                preferences.remove(APP_PIN_LOCKOUT_KEY)
             }
         }
     }

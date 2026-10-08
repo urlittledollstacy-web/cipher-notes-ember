@@ -313,6 +313,45 @@ class NoteEditorViewModel @Inject constructor(
         _uiState.update { it.copy(promptSeal = false) }
     }
 
+    /**
+     * Removes a note's seal, storing its contents in the clear.
+     *
+     * Only reachable once the note is unlocked, so the plaintext is already in
+     * state and this is a save with the seal dropped rather than a decrypt.
+     */
+    fun unseal() {
+        viewModelScope.launch {
+            val state = _uiState.value
+            val note = state.note ?: return@launch
+            if (state.isLocked) return@launch
+            try {
+                val unsealed = note.copy(
+                    title = state.title.trim(),
+                    encrypted = false,
+                    ciphertext = null,
+                    content = if (note.type == NoteType.TEXT) state.content.text else "",
+                    itemsJson = if (note.type == NoteType.TODO) JsonUtils.todoItemsToJson(state.items) else "[]",
+                    modifiedAt = System.currentTimeMillis()
+                )
+                repo.saveNote(unsealed)
+                // Nothing should keep a biometric unlock pointing at a note
+                // that is now plaintext.
+                crypto.removeBiometricPassword(note.id)
+                // Drop the cached password so the next save cannot re-seal.
+                currentUserPassword = null
+                _uiState.update { it.copy(
+                    note = unsealed,
+                    encrypted = false,
+                    isLocked = false,
+                    hasBiometric = false,
+                    error = null
+                ) }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(error = "Unseal failed") }
+            }
+        }
+    }
+
     fun unlockWithBiometric() {
         val note = _uiState.value.note ?: return
         val savedPassword = crypto.getPasswordFromBiometric(note.id)

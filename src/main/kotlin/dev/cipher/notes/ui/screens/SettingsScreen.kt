@@ -3,6 +3,7 @@ package dev.cipher.notes.ui.screens
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -52,15 +53,24 @@ fun SettingsScreen(
     var pendingImportUri by remember { mutableStateOf<Uri?>(null) }
     var showImportPasswordDialog by remember { mutableStateOf(false) }
     var importPassword by remember { mutableStateOf("") }
-
-    val useDynamicColors by viewModel.useDynamicColors.collectAsState(initial = true)
-    val themeMode by viewModel.themeMode.collectAsState(initial = ThemeMode.DEFAULT)
     var showThemeDialog by remember { mutableStateOf(false) }
-    val isAppLockEnabled by viewModel.isAppLockEnabled.collectAsState(initial = false)
-    val isBiometricEnabled by viewModel.isBiometricEnabled.collectAsState(initial = true)
-    val isWidgetContentVisible by viewModel.isWidgetContentVisible.collectAsState(initial = false)
-    val sealNewNotesByDefault by viewModel.sealNewNotesByDefault.collectAsState(initial = true)
-    val currentPin by viewModel.appPin.collectAsState(initial = null)
+
+    // Unknown until storage emits. Painted as a blank background rather than
+    // guessed, so a rotated screen never shows the wrong theme or toggles.
+    val settings by viewModel.uiState.collectAsState(initial = null)
+
+    val loaded = settings
+    if (loaded == null) {
+        // Storage has not emitted yet. Draw the window background and nothing
+        // else, so a rotated screen never flashes a guessed theme or toggle.
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background)
+        )
+        return
+    }
+
 
     val allNotes by viewModel.allNotes.collectAsState(initial = emptyList())
     val pinnedNoteIds by viewModel.pinnedNoteIds.collectAsState(initial = emptySet())
@@ -260,7 +270,7 @@ fun SettingsScreen(
                             supportingContent = { Text(mode.summary, color = onSurfaceVariant) },
                             leadingContent = { ThemeSwatch(mode, tint = primaryColor) },
                             trailingContent = {
-                                RadioButton(selected = mode == themeMode, onClick = null)
+                                RadioButton(selected = mode == loaded.themeMode, onClick = null)
                             },
                             colors = ListItemDefaults.colors(containerColor = Color.Transparent)
                         )
@@ -581,7 +591,7 @@ fun SettingsScreen(
                     leadingContent = { Icon(Icons.Rounded.Palette, null, tint = primaryColor) },
                     trailingContent = {
                         Switch(
-                            checked = useDynamicColors,
+                            checked = loaded.dynamicColors,
                             onCheckedChange = { viewModel.setDynamicColors(it) },
                             colors = SwitchDefaults.colors(
                                 checkedThumbColor = primaryColor,
@@ -603,12 +613,12 @@ fun SettingsScreen(
                 ListItem(
                     modifier = Modifier.clickable { showThemeDialog = true },
                     headlineContent = { Text("Theme", color = onSurface) },
-                    supportingContent = { Text(themeMode.summary, color = onSurfaceVariant) },
+                    supportingContent = { Text(loaded.themeMode.summary, color = onSurfaceVariant) },
                     leadingContent = {
-                        ThemeSwatch(themeMode, tint = primaryColor)
+                        ThemeSwatch(loaded.themeMode, tint = primaryColor)
                     },
                     trailingContent = {
-                        Text(themeMode.label, color = primaryColor, style = MaterialTheme.typography.labelLarge)
+                        Text(loaded.themeMode.label, color = primaryColor, style = MaterialTheme.typography.labelLarge)
                     },
                     colors = ListItemDefaults.colors(containerColor = Color.Transparent)
                 )
@@ -700,7 +710,7 @@ fun SettingsScreen(
                         },
                         trailingContent = {
                             Switch(
-                                checked = isWidgetContentVisible,
+                                checked = loaded.widgetContentVisible,
                                 onCheckedChange = { viewModel.setWidgetContentVisible(it) },
                                 colors = SwitchDefaults.colors(
                                     checkedThumbColor = primaryColor,
@@ -736,7 +746,7 @@ fun SettingsScreen(
                         leadingContent = { Icon(Icons.Rounded.Lock, null, tint = MaterialTheme.colorScheme.secondary) },
                         trailingContent = {
                             Switch(
-                                checked = sealNewNotesByDefault,
+                                checked = loaded.sealNewNotesByDefault,
                                 onCheckedChange = { viewModel.setSealNewNotesByDefault(it) },
                                 colors = SwitchDefaults.colors(
                                     checkedThumbColor = MaterialTheme.colorScheme.secondary,
@@ -759,9 +769,9 @@ fun SettingsScreen(
                         leadingContent = { Icon(Icons.Rounded.Lock, null, tint = primaryColor) },
                         trailingContent = {
                             Switch(
-                                checked = isAppLockEnabled,
+                                checked = loaded.appLockEnabled,
                                 onCheckedChange = { enabled ->
-                                    if (enabled && currentPin == null) {
+                                    if (enabled && !loaded.appPinSet) {
                                         showPinDialog = true
                                     } else {
                                         viewModel.setAppLock(enabled)
@@ -776,7 +786,7 @@ fun SettingsScreen(
                         colors = ListItemDefaults.colors(containerColor = Color.Transparent)
                     )
 
-                    if (isAppLockEnabled) {
+                    if (loaded.appLockEnabled) {
                         ListItem(
                             headlineContent = { Text("Biometric Unlock", color = onSurface) },
                             supportingContent = {
@@ -789,7 +799,7 @@ fun SettingsScreen(
                             leadingContent = { Icon(Icons.Rounded.Fingerprint, null, tint = primaryColor) },
                             trailingContent = {
                                 Switch(
-                                    checked = isBiometricEnabled && isHardwareBiometricAvailable,
+                                    checked = loaded.biometricEnabled && isHardwareBiometricAvailable,
                                     enabled = isHardwareBiometricAvailable,
                                     onCheckedChange = { viewModel.setBiometric(it) },
                                     colors = SwitchDefaults.colors(
@@ -806,7 +816,7 @@ fun SettingsScreen(
                             headlineContent = { Text("Change App PIN", color = onSurface) },
                             supportingContent = {
                                 Text(
-                                    if (currentPin == null) "PIN not set" else "Update your 4-digit security code",
+                                    if (loaded.appPinSet) "Update your 4-digit security code" else "PIN not set",
                                     color = onSurfaceVariant
                                 )
                             },
@@ -814,7 +824,7 @@ fun SettingsScreen(
                             colors = ListItemDefaults.colors(containerColor = Color.Transparent)
                         )
 
-                        if (currentPin != null) {
+                        if (loaded.appPinSet) {
                             ListItem(
                                 modifier = Modifier.clickable { showRemovePinConfirm = true },
                                 headlineContent = { Text("Remove App PIN", color = onSurface) },
