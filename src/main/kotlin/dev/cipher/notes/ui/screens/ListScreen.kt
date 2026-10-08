@@ -171,6 +171,7 @@ fun ListScreen(
                                 onClick = { onNoteClick(note.id) },
                                 onSwipeDelete = { vm.requestDelete(note.id) },
                                 isPinned = uiState.pinnedIds.contains(note.id),
+                                hasBiometric = note.id in uiState.bioNoteIds,
                                 onPinClick = { vm.togglePin(note.id) }
                             )
                         }
