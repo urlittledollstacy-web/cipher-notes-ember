@@ -42,11 +42,13 @@ class AppLockViewModel @Inject constructor(
     /**
      * Whether the app lock has been satisfied.
      *
-     * Deliberately kept in [SavedStateHandle] rather than persisted: a rotation
-     * must not re-lock, but a cold start must.
+     * Snapshot state so Compose recomposes when it flips, and mirrored into
+     * [SavedStateHandle] so ProcessDeath recovery keeps it. Reading the handle
+     * in a plain getter would not be observable and the lock screen would never
+     * advance. Deliberately not persisted: a cold start must lock again.
      */
-    val isAuthenticated: Boolean
-        get() = savedStateHandle.get<Boolean>(AUTHENTICATED_KEY) ?: false
+    var isAuthenticated by mutableStateOf(savedStateHandle.get<Boolean>(AUTHENTICATED_KEY) ?: false)
+        private set
 
     fun cacheLockEnabled(enabled: Boolean) {
         isAppLockEnabled = enabled
@@ -58,6 +60,7 @@ class AppLockViewModel @Inject constructor(
     }
 
     fun markAuthenticated() {
+        isAuthenticated = true
         savedStateHandle[AUTHENTICATED_KEY] = true
     }
 
