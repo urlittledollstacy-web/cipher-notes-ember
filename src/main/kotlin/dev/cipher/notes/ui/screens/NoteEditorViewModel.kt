@@ -9,8 +9,8 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
-import dagger.hilt.android.qualifiers.ApplicationContext
 import dev.cipher.notes.crypto.CryptoManager
+import dev.cipher.notes.crypto.LockoutController
 import dev.cipher.notes.data.Note
 import dev.cipher.notes.data.NoteRepository
 import dev.cipher.notes.data.NoteType
@@ -49,16 +49,13 @@ data class EditorUiState(
 
 @HiltViewModel
 class NoteEditorViewModel @Inject constructor(
-    @ApplicationContext private val context: Context,
     private val repo: NoteRepository,
     private val crypto: CryptoManager,
+    private val lockout: LockoutController,
     private val savedStateHandle: SavedStateHandle
 ) : ViewModel() {
 
     private companion object {
-        const val MAX_UNLOCK_ATTEMPTS = 5
-        const val BASE_LOCKOUT_MS = 2_000L
-
         /**
          * Quiet period before a typed change is written. Long enough that a
          * burst of keystrokes collapses into one write, short enough that the
@@ -71,8 +68,6 @@ class NoteEditorViewModel @Inject constructor(
     private val promptSealOnOpen: Boolean =
         savedStateHandle.get<String>("promptSeal")?.toBoolean() ?: false
     private var currentUserPassword: String? = null
-    private var failedAttempts = 0
-    private var lockoutUntil = 0L
 
     /**
      * Serializes every write. Saves are launched concurrently (one per
@@ -334,8 +329,11 @@ class NoteEditorViewModel @Inject constructor(
         viewModelScope.launch {
             val state = _uiState.value
             val note = state.note ?: return@launch
+            val id = note.id
 
-            val remainingMs = lockoutUntil - System.currentTimeMillis()
+            // Consulted fresh from storage each time: the wait outlives this
+            // view model, so a lockout set before leaving the note still holds.
+            val remainingMs = lockout.remainingLockoutMs(id, System.currentTimeMillis())
             if (remainingMs > 0) {
                 _uiState.update {
                     it.copy(error = "Too many attempts. Try again in ${(remainingMs / 1000) + 1}s", isLocked = true)
@@ -351,12 +349,10 @@ class NoteEditorViewModel @Inject constructor(
 
                 val payload = JSONObject(decryptedJson)
                 currentUserPassword = password
-                failedAttempts = 0
-                lockoutUntil = 0L
+                lockout.recordSuccess(id)
 
-
-                if (state.hasBiometric || crypto.hasBiometricPassword(note.id)) {
-                    crypto.savePasswordForBiometric(note.id, password)
+                if (state.hasBiometric || crypto.hasBiometricPassword(id)) {
+                    crypto.savePasswordForBiometric(id, password)
                 }
 
                 _uiState.update { it.copy(
@@ -366,18 +362,13 @@ class NoteEditorViewModel @Inject constructor(
                     items = if (note.type == NoteType.TODO) {
                         JsonUtils.jsonToTodoItems(payload.optString("items", "[]"))
                     } else emptyList(),
-                    hasBiometric = crypto.hasBiometricPassword(note.id),
+                    hasBiometric = crypto.hasBiometricPassword(id),
                     error = null
                 ) }
             } catch (e: Exception) {
-                failedAttempts++
-                if (failedAttempts >= MAX_UNLOCK_ATTEMPTS) {
-                    // Exponential backoff caps how fast a short PIN can be guessed.
-                    lockoutUntil = System.currentTimeMillis() +
-                        BASE_LOCKOUT_MS * (1L shl (failedAttempts - MAX_UNLOCK_ATTEMPTS).coerceAtMost(6))
-                }
-                val lockMessage = if (lockoutUntil > System.currentTimeMillis()) {
-                    "Wrong password. Locked for ${(lockoutUntil - System.currentTimeMillis()) / 1000 + 1}s"
+                val backoff = lockout.recordFailure(id, System.currentTimeMillis())
+                val lockMessage = if (backoff > 0L) {
+                    "Wrong password. Locked for ${(backoff / 1000) + 1}s"
                 } else {
                     "Wrong password"
                 }
