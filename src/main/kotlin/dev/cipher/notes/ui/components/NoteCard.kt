@@ -223,7 +223,7 @@ fun ChecklistItemRow(
 }
 
 @Composable
-fun SealedTag() {
+fun SealedTag(hasBiometric: Boolean = false) {
     Surface(
         shape = RoundedCornerShape(6.dp),
         color = MaterialTheme.colorScheme.secondary.copy(alpha = 0.14f),
@@ -232,12 +232,25 @@ fun SealedTag() {
             MaterialTheme.colorScheme.secondary.copy(alpha = 0.55f)
         )
     ) {
-        Text(
-            text = "SEALED",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.secondary,
-            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-        )
+        Row(
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(3.dp)
+        ) {
+            if (hasBiometric) {
+                Icon(
+                    imageVector = Icons.Default.Fingerprint,
+                    contentDescription = null,
+                    modifier = Modifier.size(12.dp),
+                    tint = MaterialTheme.colorScheme.secondary
+                )
+            }
+            Text(
+                text = "SEALED",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.secondary
+            )
+        }
     }
 }
 
@@ -280,15 +293,8 @@ fun NoteCard(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    if (note.encrypted && hasBiometric) {
-                        Icon(
-                            imageVector = Icons.Default.Fingerprint,
-                            contentDescription = "Biometric protected",
-                            modifier = Modifier.size(16.dp),
-                            tint = MaterialTheme.colorScheme.secondary
-                        )
-                    } else if (note.encrypted) {
-                        SealedTag()
+                    if (note.encrypted) {
+                        SealedTag(hasBiometric = hasBiometric)
                     } else {
                         Text(
                             text = if (note.type == NoteType.TODO) "☑️" else "📝",

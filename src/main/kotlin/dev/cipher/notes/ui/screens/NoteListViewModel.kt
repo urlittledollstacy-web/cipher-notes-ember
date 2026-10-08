@@ -13,7 +13,9 @@ import dev.cipher.notes.data.NoteRepository
 import dev.cipher.notes.data.NoteType
 import dev.cipher.notes.widget.NotesWidget
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -27,6 +29,7 @@ data class ListUiState(
     val filterBy: String = "all",
     val sortBy: String = "modified",
     val pinnedIds: Set<String> = emptySet(),
+    val bioNoteIds: Set<String> = emptySet(),
     val pendingDelete: Note? = null
 )
 
@@ -74,12 +77,23 @@ class NoteListViewModel @Inject constructor(
                 val visibleNotes =
                     applyFiltersAndSort(source.allNotes, source.query, source.filter, source.sort, source.pinnedIds)
                         .filterNot { it.id == pendingId }
+                // Biometric state lives in EncryptedSharedPreferences, which is
+                // not reactive. Reading it decrypts, so do it off the main
+                // thread and recompute per emission to avoid a stale badge.
+                val bioNoteIds = visibleNotes
+                    .filter { it.encrypted }
+                    .map { it.id }
+                    .filter { id ->
+                        withContext(Dispatchers.IO) { crypto.hasBiometricPassword(id) }
+                    }
+                    .toSet()
                 ListUiState(
                     notes = visibleNotes,
                     searchQuery = source.query,
                     filterBy = source.filter,
                     sortBy = source.sort,
                     pinnedIds = source.pinnedIds,
+                    bioNoteIds = bioNoteIds,
                     pendingDelete = source.allNotes.firstOrNull { it.id == pendingId }
                 )
             }.collect { newState ->
