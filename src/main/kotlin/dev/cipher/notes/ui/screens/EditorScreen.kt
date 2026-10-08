@@ -34,6 +34,7 @@ import androidx.fragment.app.FragmentActivity
 import androidx.hilt.navigation.compose.hiltViewModel
 import dev.cipher.notes.crypto.BiometricPromptManager
 import dev.cipher.notes.ui.components.EncryptDialog
+import dev.cipher.notes.ui.components.UnlockCountdown
 import dev.cipher.notes.utils.DateUtils
 
 class UrlVisualTransformation(private val linkColor: Color) : VisualTransformation {
@@ -225,6 +226,7 @@ fun EditorScreen(
                     if (uiState.error != null) {
                         Text(uiState.error!!, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 8.dp))
                     }
+                    UnlockCountdown(uiState.lockoutUntil, modifier = Modifier.padding(top = 4.dp))
                     Spacer(modifier = Modifier.height(24.dp))
                     Button(
                         onClick = { vm.unlock(unlockPassword) },
