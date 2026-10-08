@@ -25,8 +25,16 @@ jobs:
           distribution: temurin
           cache: gradle
 
+      # The runner image ships an SDK, but not necessarily platform 36.
+      # android-actions/setup-android installs the removed `tools` package
+      # and fails, so drive sdkmanager directly.
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        run: |
+          SDK="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          SDKMGR="$(ls -d "$SDK"/cmdline-tools/*/bin/sdkmanager 2>/dev/null | tail -1)"
+          echo "Using $SDKMGR"
+          yes | "$SDKMGR" --licenses > /dev/null 2>&1 || true
+          "$SDKMGR" --install "platforms;android-36" "build-tools;36.0.0" "platform-tools"
 
       - name: Unit tests
         run: ./gradlew testDebugUnitTest --no-daemon --stacktrace
