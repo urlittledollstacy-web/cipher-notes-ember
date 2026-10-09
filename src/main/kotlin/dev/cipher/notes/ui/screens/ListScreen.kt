@@ -59,7 +59,9 @@ fun ListScreen(
             actionLabel = "Undo",
             duration = SnackbarDuration.Long
         )
-        if (result == SnackbarResult.ActionPerformed) vm.undoDelete()
+        // The snackbar is the undo window now that the delete is immediate: when
+        // it goes away without Undo, the in-memory copy is dropped for good.
+        if (result == SnackbarResult.ActionPerformed) vm.undoDelete() else vm.dismissDeleted()
     }
 
     fun openCreated(id: String, extraQuery: String? = null, seal: Boolean = true): String {

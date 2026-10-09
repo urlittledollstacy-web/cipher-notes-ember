@@ -12,7 +12,6 @@ import dev.cipher.notes.data.Note
 import dev.cipher.notes.data.NoteRepository
 import dev.cipher.notes.data.NoteType
 import dev.cipher.notes.widget.NotesWidget
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -40,11 +39,11 @@ class NoteListViewModel @Inject constructor(
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
-    private var pendingDeleteJob: Job? = null
+    private var pendingWasPinned = false
 
     private val prefs: SharedPreferences = context.getSharedPreferences("pinned_notes_prefs", Context.MODE_PRIVATE)
 
-    private val _pendingDeleteId = MutableStateFlow<String?>(null)
+    private val _pendingDelete = MutableStateFlow<Note?>(null)
     private val _searchQuery = MutableStateFlow("")
     private val _filterBy = MutableStateFlow("all")
     private val _sortBy = MutableStateFlow("modified")
@@ -71,12 +70,12 @@ class NoteListViewModel @Inject constructor(
                 _pinnedIds
             ) { allNotes, query, filter, sort, pinnedIds ->
                 ListSource(allNotes, query, filter, sort, pinnedIds)
-            }.combine(_pendingDeleteId) { source, pendingId ->
-                // A note awaiting undo stays in the DB, so filter it out of the
-                // visible list here rather than deleting it eagerly.
+            }.combine(_pendingDelete) { source, pending ->
+                // The row is already gone from the DB; keep it out of the list
+                // until the undo window closes so it does not flash back.
                 val visibleNotes =
                     applyFiltersAndSort(source.allNotes, source.query, source.filter, source.sort, source.pinnedIds)
-                        .filterNot { it.id == pendingId }
+                        .filterNot { it.id == pending?.id }
                 // Biometric state lives in EncryptedSharedPreferences, which is
                 // not reactive. Reading it decrypts, so do it off the main
                 // thread and recompute per emission to avoid a stale badge.
@@ -94,7 +93,7 @@ class NoteListViewModel @Inject constructor(
                     sortBy = source.sort,
                     pinnedIds = source.pinnedIds,
                     bioNoteIds = bioNoteIds,
-                    pendingDelete = source.allNotes.firstOrNull { it.id == pendingId }
+                    pendingDelete = pending
                 )
             }.collect { newState ->
                 _uiState.value = newState
@@ -122,42 +121,48 @@ class NoteListViewModel @Inject constructor(
     fun setSortBy(sort: String) { _sortBy.value = sort }
 
     /**
-     * Hides [id] from the list and starts the undo window. The row is left in
-     * the database, so [undoDelete] is lossless: no ciphertext is touched and
-     * the biometric passphrase is never removed. Only when the window closes
-     * without an undo does the note actually go away.
+     * Deletes [id] at once and offers an undo window.
+     *
+     * The delete is committed immediately, not after the undo window. A deferred
+     * delete lived only in an in-memory coroutine, so closing the app during the
+     * window cancelled it and the note came back - sometimes swiped away several
+     * times and never gone. Deleting now puts the outcome on disk, where closing
+     * the app cannot undo it. The removed note is held in memory only to reverse
+     * the delete if Undo is tapped.
      */
     fun requestDelete(id: String) {
-        pendingDeleteJob?.cancel()
-        _pendingDeleteId.value = id
-        pendingDeleteJob = viewModelScope.launch {
-            delay(UNDO_WINDOW_MS)
-            commitDelete(id)
+        viewModelScope.launch {
+            val note = repo.getNoteById(id) ?: return@launch
+            pendingWasPinned = _pinnedIds.value.contains(id)
+            if (note.encrypted) {
+                crypto.removeBiometricPassword(id)
+            }
+            repo.deleteNote(id)
+            NotesWidget().updateAll(context)
+
+            // Drives the snackbar and hides the row until the window closes.
+            _pendingDelete.value = note
         }
     }
 
     fun undoDelete() {
-        pendingDeleteJob?.cancel()
-        pendingDeleteJob = null
-        _pendingDeleteId.value = null
+        val note = _pendingDelete.value ?: return
+        _pendingDelete.value = null
+        viewModelScope.launch {
+            repo.insertOrUpdateNote(note)
+            if (pendingWasPinned) togglePin(note.id)
+            NotesWidget().updateAll(context)
+        }
     }
 
-    private suspend fun commitDelete(id: String) {
-        val note = repo.getNoteById(id)
-        if (note?.encrypted == true) {
-            crypto.removeBiometricPassword(id)
-        }
-        repo.deleteNote(id)
-        if (_pinnedIds.value.contains(id)) {
-            togglePin(id)
-        }
-        NotesWidget().updateAll(context)
-        _pendingDeleteId.value = null
-        pendingDeleteJob = null
-    }
-
-    companion object {
-        const val UNDO_WINDOW_MS = 7_000L
+    /**
+     * Called when the undo window closes without an undo. The delete is already
+     * done; this only clears the in-memory copy so the row stops being withheld
+     * and the pending biometric passphrase can no longer be restored.
+     */
+    fun dismissDeleted() {
+        if (_pendingDelete.value == null) return
+        _pendingDelete.value = null
     }
 
     fun createNote(type: NoteType, onCreated: (String) -> Unit) {
