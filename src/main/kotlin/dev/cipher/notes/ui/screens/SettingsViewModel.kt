@@ -377,6 +377,7 @@ class SettingsViewModel @Inject constructor(
                         put("modifiedAt", note.modifiedAt)
                         put("encrypted", note.encrypted)
                         put("ciphertext", note.ciphertext ?: JSONObject.NULL)
+                        put("ciphertextHash", note.ciphertextHash ?: JSONObject.NULL)
                         put("type", note.type.name)
                     }
                     jsonArray.put(jsonNote)
@@ -448,6 +449,12 @@ class SettingsViewModel @Inject constructor(
                     }
 
                     val ciphertextValue = if (jsonNote.isNull("ciphertext")) null else jsonNote.optString("ciphertext", null)
+                    // Older backups predate the integrity column: leave it null so
+                    // those notes skip the fingerprint check rather than being
+                    // treated as damaged.
+                    val ciphertextHashValue =
+                        if (jsonNote.isNull("ciphertextHash")) null
+                        else jsonNote.optString("ciphertextHash", null)
 
                     val note = Note(
                         id = jsonNote.optString("id", java.util.UUID.randomUUID().toString()),
@@ -458,6 +465,7 @@ class SettingsViewModel @Inject constructor(
                         modifiedAt = jsonNote.optLong("modifiedAt", System.currentTimeMillis()),
                         encrypted = jsonNote.optBoolean("encrypted", false),
                         ciphertext = ciphertextValue,
+                        ciphertextHash = ciphertextHashValue,
                         type = noteType
                     )
 

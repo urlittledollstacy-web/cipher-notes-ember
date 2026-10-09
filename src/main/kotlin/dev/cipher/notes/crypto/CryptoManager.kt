@@ -39,8 +39,23 @@ class CryptoManager @Inject constructor(
         return android.util.Base64.encodeToString(combined, android.util.Base64.NO_WRAP)
     }
 
+    /**
+     * Decrypts [cipherB64].
+     *
+     * Throws [DamagedCiphertextException] when the stored value cannot even be
+     * parsed, and [javax.crypto.AEADBadTagException] when the authentication tag
+     * does not match (a wrong password, or altered bytes). The caller must keep
+     * the two apart: only the latter is a password failure.
+     */
     fun decrypt(cipherB64: String, password: String): String {
-        val combined = android.util.Base64.decode(cipherB64, android.util.Base64.NO_WRAP)
+        val combined = try {
+            android.util.Base64.decode(cipherB64, android.util.Base64.NO_WRAP)
+        } catch (e: IllegalArgumentException) {
+            throw DamagedCiphertextException("Stored ciphertext is not valid Base64", e)
+        }
+        if (combined.size < SALT_LENGTH + IV_LENGTH) {
+            throw DamagedCiphertextException("Stored ciphertext is too short to hold a salt and IV")
+        }
         val salt = combined.sliceArray(0 until SALT_LENGTH)
         val iv = combined.sliceArray(SALT_LENGTH until SALT_LENGTH + IV_LENGTH)
         val ciphertext = combined.sliceArray(SALT_LENGTH + IV_LENGTH until combined.size)
@@ -50,6 +65,10 @@ class CryptoManager @Inject constructor(
         val plainBytes = cipher.doFinal(ciphertext)
         return String(plainBytes, Charsets.UTF_8)
     }
+
+    /** Fingerprint of a stored ciphertext, recorded when a note is sealed. */
+    fun ciphertextFingerprint(cipherB64: String): String =
+        CiphertextIntegrity.fingerprint(cipherB64)
 
     private fun deriveKey(password: String, salt: ByteArray): SecretKeySpec {
         val factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")

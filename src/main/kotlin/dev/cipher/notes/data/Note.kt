@@ -14,6 +14,8 @@ data class Note(
     val itemsJson: String = "[]",
     val encrypted: Boolean = false,
     val ciphertext: String? = null,
+    /** SHA-256 of [ciphertext], taken when the note was sealed. Null for unsealed or legacy notes. */
+    val ciphertextHash: String? = null,
     val tags: String = "",
     val createdAt: Long = System.currentTimeMillis(),
     val modifiedAt: Long = System.currentTimeMillis()
