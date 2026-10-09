@@ -36,6 +36,12 @@ object AppModule {
     @Provides @Singleton
     fun provideDataStore(@ApplicationContext context: Context): DataStore<Preferences> {
         return PreferenceDataStoreFactory.create(
+            // A damaged settings file used to throw on every read, which left
+            // the startup gate waiting forever and then showed a lock screen
+            // whose PIN lives in that same unreadable file: an unpassable wall.
+            // Falling back to a clean slate opens the app with the lock off and
+            // default settings; notes live in Room, so they are unaffected.
+            corruptionHandler = ReplaceFileCorruptionHandler { emptyPreferences() },
             produceFile = { context.preferencesDataStoreFile("settings") }
         )
     }
