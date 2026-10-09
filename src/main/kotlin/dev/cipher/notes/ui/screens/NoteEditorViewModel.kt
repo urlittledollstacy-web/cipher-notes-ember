@@ -9,7 +9,9 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dev.cipher.notes.crypto.CiphertextIntegrity
 import dev.cipher.notes.crypto.CryptoManager
+import dev.cipher.notes.crypto.DamagedCiphertextException
 import dev.cipher.notes.crypto.LockoutController
 import dev.cipher.notes.data.Note
 import dev.cipher.notes.data.NoteRepository
@@ -31,7 +33,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import org.json.JSONException
 import org.json.JSONObject
+import javax.crypto.AEADBadTagException
 import javax.inject.Inject
 
 data class EditorUiState(
@@ -66,6 +70,14 @@ class NoteEditorViewModel @Inject constructor(
          * note is on disk almost immediately after typing stops.
          */
         const val SAVE_DEBOUNCE_MS = 400L
+
+        /**
+         * Shown when a sealed note cannot be read for reasons other than a wrong
+         * password. Deliberately does not say "wrong password": the password may
+         * be right, and blaming it would send the user hunting for a mistake they
+         * did not make.
+         */
+        const val DAMAGED_NOTE_MESSAGE = "This note's data is damaged and cannot be opened."
     }
 
     private val noteId: String? = savedStateHandle["noteId"]
@@ -262,6 +274,7 @@ class NoteEditorViewModel @Inject constructor(
                 content = if (!state.encrypted && note.type == NoteType.TEXT) state.content.text else "",
                 itemsJson = if (!state.encrypted && note.type == NoteType.TODO) JsonUtils.todoItemsToJson(state.items) else "[]",
                 ciphertext = updatedCiphertext,
+                ciphertextHash = updatedCiphertext?.let { crypto.ciphertextFingerprint(it) },
                 modifiedAt = System.currentTimeMillis()
             )
 
@@ -314,6 +327,7 @@ class NoteEditorViewModel @Inject constructor(
 
                         val encryptedNote = note.copy(
                             ciphertext = cipher,
+                            ciphertextHash = crypto.ciphertextFingerprint(cipher),
                             encrypted = true,
                             content = "",
                             itemsJson = "[]",
@@ -369,13 +383,35 @@ class NoteEditorViewModel @Inject constructor(
 
                 try {
                     val ciphertext = note.ciphertext ?: return@launch
-                    val decryptedJson = withContext(Dispatchers.Default) {
-                        crypto.decrypt(ciphertext, password)
+
+                    // Bytes that no longer match the fingerprint taken when the
+                    // note was sealed can never decrypt, so the password is not
+                    // at fault. Say so without consuming a lockout rung.
+                    if (!CiphertextIntegrity.matches(ciphertext, note.ciphertextHash)) {
+                        _uiState.update { it.copy(error = DAMAGED_NOTE_MESSAGE) }
+                        return@launch
                     }
 
-                    val payload = JSONObject(decryptedJson)
+                    val decryptedJson = try {
+                        withContext(Dispatchers.Default) {
+                            crypto.decrypt(ciphertext, password)
+                        }
+                    } catch (e: DamagedCiphertextException) {
+                        _uiState.update { it.copy(error = DAMAGED_NOTE_MESSAGE) }
+                        return@launch
+                    }
+
+                    // Decryption succeeded, so the password is correct.
                     currentUserPassword = password
                     lockout.recordSuccess(id)
+
+                    val payload = try {
+                        JSONObject(decryptedJson)
+                    } catch (e: JSONException) {
+                        // Right password, unreadable payload: damage, not a bad guess.
+                        _uiState.update { it.copy(error = DAMAGED_NOTE_MESSAGE) }
+                        return@launch
+                    }
 
                     if (state.hasBiometric || crypto.hasBiometricPassword(id)) {
                         crypto.savePasswordForBiometric(id, password)
@@ -392,13 +428,23 @@ class NoteEditorViewModel @Inject constructor(
                         error = null,
                         lockoutUntil = 0L
                     ) }
+                } catch (e: AEADBadTagException) {
+                    // Only a failed authentication tag means the password is wrong.
+                    // Bytes altered inside the ciphertext raise the same exception,
+                    // which the fingerprint check above rules out.
+                    val id = _uiState.value.note?.id
+                    if (id != null) {
+                        val backoff = lockout.recordFailure(id, System.currentTimeMillis())
+                        _uiState.update { it.copy(
+                            error = "Wrong password",
+                            isLocked = true,
+                            lockoutUntil = if (backoff > 0L) System.currentTimeMillis() + backoff else 0L
+                        ) }
+                    }
                 } catch (e: Exception) {
-                    val backoff = lockout.recordFailure(id, System.currentTimeMillis())
-                    _uiState.update { it.copy(
-                        error = "Wrong password",
-                        isLocked = true,
-                        lockoutUntil = if (backoff > 0L) System.currentTimeMillis() + backoff else 0L
-                    ) }
+                    // Anything left is a damaged or unreadable note, never a
+                    // wrong password, so it must not count against the user.
+                    _uiState.update { it.copy(error = DAMAGED_NOTE_MESSAGE) }
                 }
             } finally {
                 unlockInFlight = false
@@ -430,6 +476,7 @@ class NoteEditorViewModel @Inject constructor(
                             title = state.title.trim(),
                             encrypted = false,
                             ciphertext = null,
+                            ciphertextHash = null,
                             content = if (note.type == NoteType.TEXT) state.content.text else "",
                             itemsJson = if (note.type == NoteType.TODO) JsonUtils.todoItemsToJson(state.items) else "[]",
                             modifiedAt = System.currentTimeMillis()

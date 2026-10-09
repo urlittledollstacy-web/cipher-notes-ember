@@ -27,6 +27,7 @@ object AppModule {
     @Provides @Singleton
     fun provideDatabase(@ApplicationContext ctx: Context): NoteDatabase =
         Room.databaseBuilder(ctx, NoteDatabase::class.java, "cipher_notes.db")
+            .addMigrations(NoteDatabase.MIGRATION_1_2)
             .fallbackToDestructiveMigration()
             .build()
 
